@@ -1,0 +1,37 @@
+@model EditIncidentViewModel
+@{
+    ViewData["Title"] = "Edit Incident";
+}
+
+<h1>Edit Incident #@Model.Id</h1>
+
+<form asp-action="Edit" method="post" class="card form-card">
+    <input asp-for="Id" type="hidden" />
+
+    <label asp-for="Title"></label>
+    <input asp-for="Title" />
+
+    <label asp-for="Description"></label>
+    <textarea asp-for="Description" rows="5"></textarea>
+
+    <label asp-for="Priority"></label>
+    <select asp-for="Priority">
+        <option>Low</option>
+        <option>Medium</option>
+        <option>High</option>
+        <option>Critical</option>
+    </select>
+
+    <label asp-for="Status"></label>
+    <select asp-for="Status">
+        <option>Open</option>
+        <option>In Progress</option>
+        <option>Resolved</option>
+        <option>Closed</option>
+    </select>
+
+    <div class="form-actions">
+        <button class="button" type="submit">Save</button>
+        <a asp-action="Index">Cancel</a>
+    </div>
+</form>

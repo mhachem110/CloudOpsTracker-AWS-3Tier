@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - CloudOps Tracker</title>
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+    <header class="topbar">
+        <div class="container">
+            <a class="brand" asp-controller="Incidents" asp-action="Index">CloudOps Tracker</a>
+            <span class="subtitle">AWS 3-Tier Training App</span>
+        </div>
+    </header>
+
+    <main class="container content">
+        @RenderBody()
+    </main>
+</body>
+</html>

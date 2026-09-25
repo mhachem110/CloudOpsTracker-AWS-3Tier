@@ -1,0 +1,15 @@
+[
+  {
+    "Name": "Run Web + API",
+    "Projects": [
+      {
+        "Path": "CloudOpsTracker.Web\\CloudOpsTracker.Web.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "CloudOpsTracker.API\\CloudOpsTracker.API.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]

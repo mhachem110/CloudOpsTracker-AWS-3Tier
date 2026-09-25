@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CloudOpsTracker.Web", "CloudOpsTracker.Web\CloudOpsTracker.Web.csproj", "{A8D58750-38E8-491B-9681-4EA98A2F1D5E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CloudOpsTracker.API", "CloudOpsTracker.API\CloudOpsTracker.API.csproj", "{3C4B5404-9890-4D63-8B0F-5E3B6E321C15}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A8D58750-38E8-491B-9681-4EA98A2F1D5E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A8D58750-38E8-491B-9681-4EA98A2F1D5E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A8D58750-38E8-491B-9681-4EA98A2F1D5E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A8D58750-38E8-491B-9681-4EA98A2F1D5E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3C4B5404-9890-4D63-8B0F-5E3B6E321C15}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3C4B5404-9890-4D63-8B0F-5E3B6E321C15}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3C4B5404-9890-4D63-8B0F-5E3B6E321C15}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3C4B5404-9890-4D63-8B0F-5E3B6E321C15}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
