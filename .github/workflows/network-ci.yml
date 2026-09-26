@@ -17,13 +17,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: network-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   terraform-static-checks:
     name: Terraform static checks
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout proposed changes
         uses: actions/checkout@v7
 
       - name: Setup Terraform
@@ -35,7 +39,7 @@ jobs:
       - name: Terraform format check
         run: terraform fmt -check -recursive infra
 
-      - name: Terraform init without backend
+      - name: Terraform init without remote backend
         working-directory: infra/network
         run: terraform init -backend=false -input=false
 
