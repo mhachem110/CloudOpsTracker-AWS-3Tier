@@ -15,8 +15,8 @@ provider "aws" {
 module "network" {
   source = "../modules/network"
 
-  name_prefix          = var.name_prefix
-  environment          = var.environment
-  vpc_cidr             = var.vpc_cidr
+  name_prefix           = var.name_prefix
+  environment           = var.environment
+  vpc_cidr              = var.vpc_cidr
   high_availability_nat = var.high_availability_nat
 }
