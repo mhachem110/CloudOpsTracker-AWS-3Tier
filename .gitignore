@@ -13,9 +13,13 @@ crash.log
 crash.*.log
 *.tfvars
 *.tfvars.json
+!infra/environments/**/*.tfvars
 !.terraform.lock.hcl
 packer_cache/
 *.box
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Local project archives
+*.zip
