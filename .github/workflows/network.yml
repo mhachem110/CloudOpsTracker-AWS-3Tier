@@ -1,0 +1,157 @@
+name: network
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "AWS environment to target"
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - uat
+          - prod
+      action:
+        description: "Terraform action"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloudopstracker-network-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  network:
+    name: Network ${{ inputs.environment }} - ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Validate branch and environment mapping
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          CURRENT_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          case "${TARGET_ENVIRONMENT}" in
+            dev)   EXPECTED_BRANCH="dev" ;;
+            stage) EXPECTED_BRANCH="stage" ;;
+            uat)   EXPECTED_BRANCH="uat" ;;
+            prod)  EXPECTED_BRANCH="main" ;;
+            *)
+              echo "Unsupported environment: ${TARGET_ENVIRONMENT}"
+              exit 1
+              ;;
+          esac
+
+          if [[ "${CURRENT_BRANCH}" != "${EXPECTED_BRANCH}" ]]; then
+            echo "Environment '${TARGET_ENVIRONMENT}' must run from branch '${EXPECTED_BRANCH}', not '${CURRENT_BRANCH}'."
+            exit 1
+          fi
+
+      - name: Load project configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          source infra/project.env
+
+          echo "aws_region=${AWS_REGION}" >> "$GITHUB_OUTPUT"
+          echo "name_prefix=${NAME_PREFIX}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ steps.config.outputs.aws_region }}
+
+      - name: Verify AWS identity
+        shell: bash
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.4"
+          terraform_wrapper: false
+
+      - name: Resolve Terraform state bucket
+        id: state
+        shell: bash
+        env:
+          NAME_PREFIX: ${{ steps.config.outputs.name_prefix }}
+        run: |
+          set -euo pipefail
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          echo "bucket=${NAME_PREFIX}-tfstate-${ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive infra
+
+      - name: Terraform init
+        working-directory: infra/network
+        run: |
+          terraform init \
+            -input=false \
+            -backend-config="bucket=${{ steps.state.outputs.bucket }}" \
+            -backend-config="key=${{ inputs.environment }}/network.tfstate" \
+            -backend-config="region=${{ steps.config.outputs.aws_region }}"
+
+      - name: Terraform validate
+        working-directory: infra/network
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        if: ${{ inputs.action != 'destroy' }}
+        working-directory: infra/network
+        run: |
+          terraform plan \
+            -input=false \
+            -no-color \
+            -out=tfplan \
+            -var="aws_region=${{ steps.config.outputs.aws_region }}" \
+            -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
+            -var-file="../environments/${{ inputs.environment }}/network.tfvars"
+
+      - name: Terraform destroy plan
+        if: ${{ inputs.action == 'destroy' }}
+        working-directory: infra/network
+        run: |
+          terraform plan \
+            -destroy \
+            -input=false \
+            -no-color \
+            -out=tfplan \
+            -var="aws_region=${{ steps.config.outputs.aws_region }}" \
+            -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
+            -var-file="../environments/${{ inputs.environment }}/network.tfvars"
+
+      - name: Terraform apply
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/network
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Terraform destroy
+        if: ${{ inputs.action == 'destroy' }}
+        working-directory: infra/network
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Show network outputs
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/network
+        run: terraform output

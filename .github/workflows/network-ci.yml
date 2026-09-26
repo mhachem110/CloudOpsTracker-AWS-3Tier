@@ -1,0 +1,44 @@
+name: network-ci
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - stage
+      - uat
+      - main
+    paths:
+      - "infra/network/**"
+      - "infra/modules/network/**"
+      - "infra/environments/**"
+      - ".github/workflows/network-ci.yml"
+      - ".github/workflows/network.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-static-checks:
+    name: Terraform static checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.4"
+          terraform_wrapper: false
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive infra
+
+      - name: Terraform init without backend
+        working-directory: infra/network
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform validate
+        working-directory: infra/network
+        run: terraform validate -no-color
