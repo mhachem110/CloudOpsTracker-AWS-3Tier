@@ -1,0 +1,109 @@
+name: bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloudopstracker-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Bootstrap Terraform foundation
+    runs-on: ubuntu-latest
+    environment: bootstrap
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Load project configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          source infra/project.env
+          echo "aws_region=${AWS_REGION}" >> "$GITHUB_OUTPUT"
+          echo "name_prefix=${NAME_PREFIX}" >> "$GITHUB_OUTPUT"
+          echo "iam_name_prefix=${IAM_NAME_PREFIX}" >> "$GITHUB_OUTPUT"
+          echo "github_oidc_repo_segment=${GITHUB_OIDC_REPO_SEGMENT}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ steps.config.outputs.aws_region }}
+
+      - name: Verify AWS identity
+        shell: bash
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.4"
+          terraform_wrapper: false
+
+      - name: Ensure Terraform state bucket exists
+        id: state
+        shell: bash
+        env:
+          AWS_REGION: ${{ steps.config.outputs.aws_region }}
+          NAME_PREFIX: ${{ steps.config.outputs.name_prefix }}
+        run: |
+          set -euo pipefail
+          STATE_BUCKET="$(bash scripts/bootstrap/ensure-state-bucket.sh)"
+          echo "bucket=${STATE_BUCKET}" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform format check
+        working-directory: infra/bootstrap
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        working-directory: infra/bootstrap
+        run: |
+          terraform init \
+            -input=false \
+            -backend-config="bucket=${{ steps.state.outputs.bucket }}" \
+            -backend-config="key=shared/bootstrap.tfstate" \
+            -backend-config="region=${{ steps.config.outputs.aws_region }}"
+
+      - name: Terraform validate
+        working-directory: infra/bootstrap
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        working-directory: infra/bootstrap
+        run: |
+          terraform plan \
+            -input=false \
+            -no-color \
+            -out=tfplan \
+            -var="aws_region=${{ steps.config.outputs.aws_region }}" \
+            -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
+            -var="iam_name_prefix=${{ steps.config.outputs.iam_name_prefix }}" \
+            -var="github_oidc_repo_segment=${{ steps.config.outputs.github_oidc_repo_segment }}" \
+            -var="state_bucket=${{ steps.state.outputs.bucket }}"
+
+      - name: Terraform apply
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/bootstrap
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Show deployment role ARNs
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: infra/bootstrap
+        run: terraform output deployment_role_arns
