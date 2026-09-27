@@ -42,3 +42,15 @@ output "database_master_secret_arn" {
   value     = module.database.master_user_secret_arn
   sensitive = true
 }
+
+output "single_ec2_instance_id" {
+  value = module.ec2.instance_id
+}
+
+output "single_ec2_private_ip" {
+  value = module.ec2.private_ip
+}
+
+output "application_instance_profile_name" {
+  value = module.ec2.instance_profile_name
+}
