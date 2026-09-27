@@ -1,0 +1,171 @@
+#!/bin/bash
+set -euo pipefail
+
+exec > >(tee -a /var/log/cloudopstracker-bootstrap.log) 2>&1
+
+echo "Starting CloudOpsTracker bootstrap..."
+
+dnf update -y
+dnf install -y git nginx jq dotnet-sdk-8.0 amazon-cloudwatch-agent
+
+systemctl enable --now amazon-ssm-agent
+
+# Trust the AWS RDS CA instead of bypassing certificate validation.
+curl -fsSL \
+  https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+  -o /etc/pki/ca-trust/source/anchors/aws-rds-global-bundle.pem
+update-ca-trust
+
+id cloudops >/dev/null 2>&1 || useradd --system --create-home cloudops
+
+mkdir -p /opt/cloudopstracker
+mkdir -p /etc/cloudopstracker
+mkdir -p /var/log/cloudopstracker
+
+cat >/etc/cloudopstracker/runtime.env <<EOF
+AWS_REGION=${aws_region}
+DB_HOST=${database_host}
+DB_PORT=1433
+DB_NAME=CloudOpsTrackerDb
+DB_SECRET_ARN=${database_secret_arn}
+EOF
+
+chmod 0644 /etc/cloudopstracker/runtime.env
+
+rm -rf /opt/cloudopstracker/src
+git clone --depth 1 --branch ${application_git_ref} \
+  ${application_repo_url} \
+  /opt/cloudopstracker/src
+
+dotnet publish \
+  /opt/cloudopstracker/src/CloudOpsTracker.API/CloudOpsTracker.API.csproj \
+  -c Release \
+  -o /opt/cloudopstracker/api
+
+dotnet publish \
+  /opt/cloudopstracker/src/CloudOpsTracker.Web/CloudOpsTracker.Web.csproj \
+  -c Release \
+  -o /opt/cloudopstracker/web
+
+cat >/usr/local/bin/run-cloudopstracker-api <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+source /etc/cloudopstracker/runtime.env
+
+SECRET_JSON="$(aws secretsmanager get-secret-value \
+  --region "$AWS_REGION" \
+  --secret-id "$DB_SECRET_ARN" \
+  --query SecretString \
+  --output text)"
+
+DB_USER="$(printf '%s' "$SECRET_JSON" | jq -r '.username')"
+DB_PASSWORD="$(printf '%s' "$SECRET_JSON" | jq -r '.password')"
+
+export Database__Host="$DB_HOST"
+export Database__Port="$DB_PORT"
+export Database__Name="$DB_NAME"
+export Database__Username="$DB_USER"
+export Database__Password="$DB_PASSWORD"
+export UseHttpsRedirection=false
+export ASPNETCORE_ENVIRONMENT=Production
+export ASPNETCORE_URLS=http://127.0.0.1:5001
+
+exec /usr/bin/dotnet /opt/cloudopstracker/api/CloudOpsTracker.API.dll
+EOF
+
+chmod 0755 /usr/local/bin/run-cloudopstracker-api
+
+cat >/usr/local/bin/run-cloudopstracker-web <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+export ApiBaseUrl=http://127.0.0.1:5001
+export UseHttpsRedirection=false
+export ASPNETCORE_ENVIRONMENT=Production
+export ASPNETCORE_URLS=http://127.0.0.1:5000
+
+exec /usr/bin/dotnet /opt/cloudopstracker/web/CloudOpsTracker.Web.dll
+EOF
+
+chmod 0755 /usr/local/bin/run-cloudopstracker-web
+
+cat >/etc/systemd/system/cloudopstracker-api.service <<'EOF'
+[Unit]
+Description=CloudOpsTracker API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cloudops
+WorkingDirectory=/opt/cloudopstracker/api
+ExecStart=/usr/local/bin/run-cloudopstracker-api
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/cloudopstracker/api.log
+StandardError=append:/var/log/cloudopstracker/api.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/cloudopstracker-web.service <<'EOF'
+[Unit]
+Description=CloudOpsTracker Web
+After=network-online.target cloudopstracker-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cloudops
+WorkingDirectory=/opt/cloudopstracker/web
+ExecStart=/usr/local/bin/run-cloudopstracker-web
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/cloudopstracker/web.log
+StandardError=append:/var/log/cloudopstracker/web.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+rm -f /etc/nginx/conf.d/default.conf
+
+cat >/etc/nginx/conf.d/cloudopstracker.conf <<'EOF'
+server {
+    listen 80 default_server;
+    server_name _;
+
+    add_header X-CloudOps-Instance $hostname always;
+
+    location = /healthz {
+        proxy_pass http://127.0.0.1:5001/healthz;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:5001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+
+systemctl daemon-reload
+systemctl enable cloudopstracker-api
+systemctl enable cloudopstracker-web
+systemctl enable nginx
+
+systemctl restart cloudopstracker-api
+systemctl restart cloudopstracker-web
+systemctl restart nginx
+
+echo "CloudOpsTracker bootstrap finished."
