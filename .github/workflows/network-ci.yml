@@ -10,7 +10,7 @@ on:
     paths:
       - "infra/network/**"
       - "infra/modules/network/**"
-      - "infra/environments/**"
+      - "infra/environments/**/network.tfvars"
       - ".github/workflows/network-ci.yml"
       - ".github/workflows/network.yml"
 

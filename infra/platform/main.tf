@@ -28,15 +28,15 @@ module "network" {
 module "database" {
   source = "../modules/database"
 
-  name_prefix                 = var.name_prefix
-  environment                 = var.environment
-  db_subnet_ids               = values(module.network.db_private_subnet_ids)
-  database_security_group_id  = module.network.database_security_group_id
-  instance_class              = var.database_instance_class
-  allocated_storage           = var.database_allocated_storage
-  backup_retention_period     = var.database_backup_retention_period
-  deletion_protection         = var.database_deletion_protection
-  skip_final_snapshot         = var.database_skip_final_snapshot
+  name_prefix                = var.name_prefix
+  environment                = var.environment
+  db_subnet_ids              = values(module.network.db_private_subnet_ids)
+  database_security_group_id = module.network.database_security_group_id
+  instance_class             = var.database_instance_class
+  allocated_storage          = var.database_allocated_storage
+  backup_retention_period    = var.database_backup_retention_period
+  deletion_protection        = var.database_deletion_protection
+  skip_final_snapshot        = var.database_skip_final_snapshot
 }
 
 module "ec2" {
