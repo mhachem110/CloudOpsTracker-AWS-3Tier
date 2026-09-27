@@ -98,3 +98,12 @@ variable "asg_max_size" {
   type        = number
   default     = 3
 }
+
+
+variable "root_domain_name" {
+  type = string
+}
+
+variable "application_domain_name" {
+  type = string
+}
