@@ -1,21 +1,21 @@
 name: network-deploy
 
 on:
-  # Lower environments deploy automatically only after code has been merged
-  # into the matching promotion branch.
+  # A merge into an environment branch automatically runs PLAN only.
+  # No resources are created from a normal code promotion.
   push:
     branches:
       - dev
       - stage
       - uat
+      - main
     paths:
       - "infra/network/**"
       - "infra/modules/network/**"
       - "infra/environments/**"
       - ".github/workflows/network.yml"
 
-  # Manual operations are primarily for production and controlled maintenance.
-  # Once this workflow reaches main, GitHub allows choosing the ref to run from.
+  # Apply and destroy are intentional manual operations.
   workflow_dispatch:
     inputs:
       action:
@@ -73,19 +73,11 @@ jobs:
           esac
 
           if [[ "${EVENT_NAME}" == "push" ]]; then
-            # A merge/push into dev, stage, or uat deploys that environment.
-            TERRAFORM_ACTION="apply"
+            # Normal branch promotion is PLAN ONLY.
+            TERRAFORM_ACTION="plan"
           else
+            # Apply and destroy must be explicitly requested.
             TERRAFORM_ACTION="${REQUESTED_ACTION}"
-
-            # Production is never applied automatically because main is not
-            # included in the push trigger. A prod apply must be dispatched
-            # manually from main and can be protected by GitHub Environment
-            # required reviewers.
-            if [[ "${TARGET_ENVIRONMENT}" == "prod" && "${CURRENT_BRANCH}" != "main" ]]; then
-              echo "Production operations must run from main."
-              exit 1
-            fi
           fi
 
           echo "environment=${TARGET_ENVIRONMENT}" >> "$GITHUB_OUTPUT"
@@ -100,9 +92,6 @@ jobs:
     needs: resolve-target
     runs-on: ubuntu-latest
 
-    # This selects the matching GitHub Environment:
-    # dev -> dev, stage -> stage, uat -> uat, main -> prod.
-    # The environment supplies AWS_ROLE_ARN and enforces branch/approval rules.
     environment: ${{ needs.resolve-target.outputs.environment }}
 
     concurrency:
@@ -146,7 +135,9 @@ jobs:
           NAME_PREFIX: ${{ steps.config.outputs.name_prefix }}
         run: |
           set -euo pipefail
+
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+
           echo "bucket=${NAME_PREFIX}-tfstate-${ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Terraform format check
