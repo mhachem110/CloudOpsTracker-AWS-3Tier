@@ -79,3 +79,22 @@ variable "application_git_ref" {
   description = "Git branch/ref used by the EC2 bootstrap."
   type        = string
 }
+
+
+variable "asg_min_size" {
+  description = "Minimum number of instances in the Auto Scaling Group."
+  type        = number
+  default     = 1
+}
+
+variable "asg_desired_capacity" {
+  description = "Desired number of instances in the Auto Scaling Group."
+  type        = number
+  default     = 2
+}
+
+variable "asg_max_size" {
+  description = "Maximum number of instances in the Auto Scaling Group."
+  type        = number
+  default     = 3
+}

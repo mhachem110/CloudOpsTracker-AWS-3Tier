@@ -15,3 +15,8 @@ ec2_instance_type = "t3.small"
 
 application_repo_url = "https://github.com/mhachem110/CloudOpsTracker-AWS-3Tier.git"
 application_git_ref  = "uat"
+
+# Auto Scaling
+asg_min_size = 1
+asg_desired_capacity = 2
+asg_max_size = 3
