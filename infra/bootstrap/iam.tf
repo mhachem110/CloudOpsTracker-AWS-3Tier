@@ -252,7 +252,8 @@ data "aws_iam_policy_document" "deploy_services" {
       "route53:GetHostedZone",
       "route53:ListHostedZones",
       "route53:ListHostedZonesByName",
-      "route53:ListResourceRecordSets"
+      "route53:ListResourceRecordSets",
+      "route53:ListTagsForResource"
     ]
 
     resources = ["*"]
