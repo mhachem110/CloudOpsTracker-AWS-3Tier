@@ -163,6 +163,33 @@ data "aws_iam_policy_document" "deploy_services" {
   }
 
   statement {
+    sid = "KMSForRDSAndSecrets"
+
+    actions = [
+      "kms:CreateGrant",
+      "kms:Decrypt",
+      "kms:DescribeKey",
+      "kms:Encrypt",
+      "kms:GenerateDataKey",
+      "kms:GenerateDataKeyWithoutPlaintext",
+      "kms:ReEncryptFrom",
+      "kms:ReEncryptTo"
+    ]
+
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+
+      values = [
+        "rds.${var.aws_region}.amazonaws.com",
+        "secretsmanager.${var.aws_region}.amazonaws.com"
+      ]
+    }
+  }
+
+  statement {
     sid = "CloudWatch"
 
     actions = [
@@ -250,11 +277,14 @@ data "aws_iam_policy_document" "deploy_iam" {
       "iam:GetRolePolicy",
       "iam:ListAttachedRolePolicies",
       "iam:ListInstanceProfilesForRole",
+      "iam:ListInstanceProfileTags",
       "iam:ListRolePolicies",
       "iam:PassRole",
       "iam:PutRolePolicy",
       "iam:RemoveRoleFromInstanceProfile",
+      "iam:TagInstanceProfile",
       "iam:TagRole",
+      "iam:UntagInstanceProfile",
       "iam:UntagRole",
       "iam:UpdateAssumeRolePolicy",
       "iam:UpdateRoleDescription"
@@ -308,7 +338,7 @@ resource "aws_iam_policy" "deploy_services" {
   for_each = local.environments
 
   name        = "${var.iam_name_prefix}-deploy-${each.key}-services"
-  description = "CloudOpsTracker ${each.key}: RDS, monitoring, SSM, secrets and HTTPS/DNS."
+  description = "CloudOpsTracker ${each.key}: RDS, KMS, monitoring, SSM, secrets and HTTPS/DNS."
   policy      = data.aws_iam_policy_document.deploy_services.json
 }
 
@@ -316,7 +346,7 @@ resource "aws_iam_policy" "deploy_iam" {
   for_each = local.environments
 
   name        = "${var.iam_name_prefix}-deploy-${each.key}-iam"
-  description = "CloudOpsTracker ${each.key}: project IAM roles and service-linked roles."
+  description = "CloudOpsTracker ${each.key}: project IAM roles, instance profiles and service-linked roles."
   policy      = data.aws_iam_policy_document.deploy_iam.json
 }
 
