@@ -80,3 +80,30 @@ module "launch_template" {
   database_host       = module.database.db_address
   database_secret_arn = nonsensitive(module.database.master_user_secret_arn)
 }
+
+module "alb" {
+  source = "../modules/alb"
+
+  name_prefix       = var.name_prefix
+  environment       = var.environment
+  vpc_id            = module.network.vpc_id
+  public_subnet_ids = values(module.network.public_subnet_ids)
+  security_group_id = module.network.alb_security_group_id
+  target_port       = 80
+  health_check_path = "/healthz"
+}
+
+module "autoscaling" {
+  source = "../modules/autoscaling"
+
+  name_prefix             = var.name_prefix
+  environment             = var.environment
+  launch_template_id      = module.launch_template.id
+  launch_template_version = tostring(module.launch_template.latest_version)
+  subnet_ids              = values(module.network.app_private_subnet_ids)
+  target_group_arn        = module.alb.target_group_arn
+
+  min_size         = var.asg_min_size
+  desired_capacity = var.asg_desired_capacity
+  max_size         = var.asg_max_size
+}
