@@ -1,13 +1,16 @@
 using System;
+using CloudOpsTracker.API.Data;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace CloudOpsTracker.API.Migrations;
 
+[DbContext(typeof(CloudOpsDbContext))]
+[Migration("202609230001_InitialCreate")]
 public partial class InitialCreate : Migration
 {
-    public int textvar = 0;
     protected override void Up(MigrationBuilder migrationBuilder)
     {
         migrationBuilder.CreateTable(
@@ -30,6 +33,7 @@ public partial class InitialCreate : Migration
 
     protected override void Down(MigrationBuilder migrationBuilder)
     {
-        migrationBuilder.DropTable(name: "Incidents");
+        migrationBuilder.DropTable(
+            name: "Incidents");
     }
 }
