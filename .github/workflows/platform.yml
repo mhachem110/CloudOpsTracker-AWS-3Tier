@@ -1,8 +1,7 @@
-name: network-deploy
+name: platform-deploy
 
 on:
-  # A merge into an environment branch automatically runs PLAN only.
-  # No resources are created from a normal code promotion.
+  # Normal promotion runs PLAN only. No infrastructure is created by a merge.
   push:
     branches:
       - dev
@@ -10,12 +9,13 @@ on:
       - uat
       - main
     paths:
-      - "infra/network/**"
+      - "infra/platform/**"
       - "infra/modules/network/**"
-      - "infra/environments/**/network.tfvars"
-      - ".github/workflows/network.yml"
+      - "infra/modules/database/**"
+      - "infra/environments/**/platform.tfvars"
+      - ".github/workflows/platform.yml"
 
-  # Apply and destroy are intentional manual operations.
+  # APPLY and DESTROY are explicit manual actions.
   workflow_dispatch:
     inputs:
       action:
@@ -67,16 +67,13 @@ jobs:
               ;;
             *)
               echo "Branch '${CURRENT_BRANCH}' is not an approved deployment branch."
-              echo "Allowed deployment branches: dev, stage, uat, main."
               exit 1
               ;;
           esac
 
           if [[ "${EVENT_NAME}" == "push" ]]; then
-            # Normal branch promotion is PLAN ONLY.
             TERRAFORM_ACTION="plan"
           else
-            # Apply and destroy must be explicitly requested.
             TERRAFORM_ACTION="${REQUESTED_ACTION}"
           fi
 
@@ -88,14 +85,14 @@ jobs:
           echo "Terraform action: ${TERRAFORM_ACTION}"
 
   terraform:
-    name: Network ${{ needs.resolve-target.outputs.environment }} - ${{ needs.resolve-target.outputs.action }}
+    name: Platform ${{ needs.resolve-target.outputs.environment }} - ${{ needs.resolve-target.outputs.action }}
     needs: resolve-target
     runs-on: ubuntu-latest
 
     environment: ${{ needs.resolve-target.outputs.environment }}
 
     concurrency:
-      group: cloudopstracker-network-${{ needs.resolve-target.outputs.environment }}
+      group: cloudopstracker-platform-${{ needs.resolve-target.outputs.environment }}
       cancel-in-progress: false
 
     steps:
@@ -135,30 +132,28 @@ jobs:
           NAME_PREFIX: ${{ steps.config.outputs.name_prefix }}
         run: |
           set -euo pipefail
-
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-
           echo "bucket=${NAME_PREFIX}-tfstate-${ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Terraform format check
         run: terraform fmt -check -recursive infra
 
       - name: Terraform init
-        working-directory: infra/network
+        working-directory: infra/platform
         run: |
           terraform init \
             -input=false \
             -backend-config="bucket=${{ steps.state.outputs.bucket }}" \
-            -backend-config="key=${{ needs.resolve-target.outputs.environment }}/network.tfstate" \
+            -backend-config="key=${{ needs.resolve-target.outputs.environment }}/platform.tfstate" \
             -backend-config="region=${{ steps.config.outputs.aws_region }}"
 
       - name: Terraform validate
-        working-directory: infra/network
+        working-directory: infra/platform
         run: terraform validate -no-color
 
       - name: Terraform plan
         if: ${{ needs.resolve-target.outputs.action != 'destroy' }}
-        working-directory: infra/network
+        working-directory: infra/platform
         run: |
           terraform plan \
             -input=false \
@@ -166,11 +161,11 @@ jobs:
             -out=tfplan \
             -var="aws_region=${{ steps.config.outputs.aws_region }}" \
             -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
-            -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/network.tfvars"
+            -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/platform.tfvars"
 
       - name: Terraform destroy plan
         if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
-        working-directory: infra/network
+        working-directory: infra/platform
         run: |
           terraform plan \
             -destroy \
@@ -179,19 +174,19 @@ jobs:
             -out=tfplan \
             -var="aws_region=${{ steps.config.outputs.aws_region }}" \
             -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
-            -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/network.tfvars"
+            -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/platform.tfvars"
 
       - name: Terraform apply
         if: ${{ needs.resolve-target.outputs.action == 'apply' }}
-        working-directory: infra/network
+        working-directory: infra/platform
         run: terraform apply -input=false -auto-approve tfplan
 
       - name: Terraform destroy
         if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
-        working-directory: infra/network
+        working-directory: infra/platform
         run: terraform apply -input=false -auto-approve tfplan
 
-      - name: Show network outputs
+      - name: Show platform outputs
         if: ${{ needs.resolve-target.outputs.action == 'apply' }}
-        working-directory: infra/network
+        working-directory: infra/platform
         run: terraform output
