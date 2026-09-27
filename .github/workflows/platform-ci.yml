@@ -1,0 +1,49 @@
+name: platform-ci
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - stage
+      - uat
+      - main
+    paths:
+      - "infra/platform/**"
+      - "infra/modules/network/**"
+      - "infra/modules/database/**"
+      - "infra/environments/**/platform.tfvars"
+      - ".github/workflows/platform-ci.yml"
+      - ".github/workflows/platform.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  terraform-static-checks:
+    name: Terraform platform static checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout proposed changes
+        uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.4"
+          terraform_wrapper: false
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive infra
+
+      - name: Terraform init without remote backend
+        working-directory: infra/platform
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform validate
+        working-directory: infra/platform
+        run: terraform validate -no-color
