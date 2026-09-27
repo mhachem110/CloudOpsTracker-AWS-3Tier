@@ -128,7 +128,7 @@ resource "aws_cloudwatch_metric_alarm" "asg_cpu_high" {
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 2
   datapoints_to_alarm = 2
-  threshold           = 80
+  threshold           = 70
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
   period              = 300
