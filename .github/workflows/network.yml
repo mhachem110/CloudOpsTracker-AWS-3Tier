@@ -12,7 +12,7 @@ on:
     paths:
       - "infra/network/**"
       - "infra/modules/network/**"
-      - "infra/environments/**/network.tfvars"
+      - "infra/environments/**"
       - ".github/workflows/network.yml"
 
   # Apply and destroy are intentional manual operations.

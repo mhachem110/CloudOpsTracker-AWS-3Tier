@@ -54,3 +54,15 @@ output "single_ec2_private_ip" {
 output "application_instance_profile_name" {
   value = module.ec2.instance_profile_name
 }
+
+output "app_ami_id" {
+  value = module.image.ami_id
+}
+
+output "launch_template_id" {
+  value = module.launch_template.id
+}
+
+output "launch_template_latest_version" {
+  value = module.launch_template.latest_version
+}

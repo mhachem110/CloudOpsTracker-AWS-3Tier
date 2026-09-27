@@ -57,3 +57,26 @@ module "ec2" {
   application_repo_url = var.application_repo_url
   application_git_ref  = var.application_git_ref
 }
+
+module "image" {
+  source = "../modules/image"
+
+  name_prefix        = var.name_prefix
+  environment        = var.environment
+  source_instance_id = module.ec2.instance_id
+}
+
+module "launch_template" {
+  source = "../modules/launch-template"
+
+  name_prefix           = var.name_prefix
+  environment           = var.environment
+  ami_id                = module.image.ami_id
+  instance_type         = var.ec2_instance_type
+  security_group_id     = module.network.app_security_group_id
+  instance_profile_name = module.ec2.instance_profile_name
+
+  aws_region          = var.aws_region
+  database_host       = module.database.db_address
+  database_secret_arn = nonsensitive(module.database.master_user_secret_arn)
+}

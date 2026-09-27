@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+
+exec > >(tee -a /var/log/cloudopstracker-runtime-bootstrap.log) 2>&1
+
+mkdir -p /etc/cloudopstracker
+
+cat >/etc/cloudopstracker/runtime.env <<EOF
+AWS_REGION=${aws_region}
+DB_HOST=${database_host}
+DB_PORT=1433
+DB_NAME=CloudOpsTrackerDb
+DB_SECRET_ARN=${database_secret_arn}
+EOF
+
+chmod 0644 /etc/cloudopstracker/runtime.env
+
+systemctl enable --now amazon-ssm-agent
+systemctl restart cloudopstracker-api
+systemctl restart cloudopstracker-web
+systemctl restart nginx
+
+echo "CloudOpsTracker launch-template runtime bootstrap finished."
