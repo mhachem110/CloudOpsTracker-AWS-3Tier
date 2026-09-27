@@ -4,7 +4,12 @@ variable "aws_region" {
 }
 
 variable "name_prefix" {
-  description = "Prefix used for CloudOpsTracker AWS resource names."
+  description = "Prefix used for CloudOpsTracker non-IAM AWS resource names."
+  type        = string
+}
+
+variable "iam_name_prefix" {
+  description = "Prefix used for CloudOpsTracker IAM resources."
   type        = string
 }
 
@@ -57,4 +62,20 @@ variable "database_skip_final_snapshot" {
   description = "Skip the final RDS snapshot when destroying the training environment."
   type        = bool
   default     = true
+}
+
+variable "ec2_instance_type" {
+  description = "Instance type used for the application EC2 server."
+  type        = string
+  default     = "t3.small"
+}
+
+variable "application_repo_url" {
+  description = "Git repository used by the EC2 bootstrap."
+  type        = string
+}
+
+variable "application_git_ref" {
+  description = "Git branch/ref used by the EC2 bootstrap."
+  type        = string
 }

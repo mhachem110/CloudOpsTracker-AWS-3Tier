@@ -12,6 +12,10 @@ provider "aws" {
   }
 }
 
+data "aws_ssm_parameter" "al2023_ami" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+}
+
 module "network" {
   source = "../modules/network"
 
@@ -28,10 +32,28 @@ module "database" {
   environment                = var.environment
   db_subnet_ids              = values(module.network.db_private_subnet_ids)
   database_security_group_id = module.network.database_security_group_id
+  instance_class             = var.database_instance_class
+  allocated_storage          = var.database_allocated_storage
+  backup_retention_period    = var.database_backup_retention_period
+  deletion_protection        = var.database_deletion_protection
+  skip_final_snapshot        = var.database_skip_final_snapshot
+}
 
-  instance_class          = var.database_instance_class
-  allocated_storage       = var.database_allocated_storage
-  backup_retention_period = var.database_backup_retention_period
-  deletion_protection     = var.database_deletion_protection
-  skip_final_snapshot     = var.database_skip_final_snapshot
+module "ec2" {
+  source = "../modules/ec2"
+
+  name_prefix       = var.name_prefix
+  iam_name_prefix   = var.iam_name_prefix
+  environment       = var.environment
+  ami_id            = data.aws_ssm_parameter.al2023_ami.value
+  instance_type     = var.ec2_instance_type
+  subnet_id         = module.network.app_private_subnet_ids["a"]
+  security_group_id = module.network.app_security_group_id
+
+  aws_region          = var.aws_region
+  database_host       = module.database.db_address
+  database_secret_arn = nonsensitive(module.database.master_user_secret_arn)
+
+  application_repo_url = var.application_repo_url
+  application_git_ref  = var.application_git_ref
 }

@@ -9,9 +9,10 @@ on:
       - uat
       - main
     paths:
+      - "CloudOpsTracker.API/**"
+      - "CloudOpsTracker.Web/**"
       - "infra/platform/**"
-      - "infra/modules/network/**"
-      - "infra/modules/database/**"
+      - "infra/modules/**"
       - "infra/environments/**/platform.tfvars"
       - ".github/workflows/platform.yml"
 
@@ -53,18 +54,10 @@ jobs:
           set -euo pipefail
 
           case "${CURRENT_BRANCH}" in
-            dev)
-              TARGET_ENVIRONMENT="dev"
-              ;;
-            stage)
-              TARGET_ENVIRONMENT="stage"
-              ;;
-            uat)
-              TARGET_ENVIRONMENT="uat"
-              ;;
-            main)
-              TARGET_ENVIRONMENT="prod"
-              ;;
+            dev)   TARGET_ENVIRONMENT="dev" ;;
+            stage) TARGET_ENVIRONMENT="stage" ;;
+            uat)   TARGET_ENVIRONMENT="uat" ;;
+            main)  TARGET_ENVIRONMENT="prod" ;;
             *)
               echo "Branch '${CURRENT_BRANCH}' is not an approved deployment branch."
               exit 1
@@ -108,6 +101,7 @@ jobs:
 
           echo "aws_region=${AWS_REGION}" >> "$GITHUB_OUTPUT"
           echo "name_prefix=${NAME_PREFIX}" >> "$GITHUB_OUTPUT"
+          echo "iam_name_prefix=${IAM_NAME_PREFIX}" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials with GitHub OIDC
         uses: aws-actions/configure-aws-credentials@v6.3.0
@@ -116,7 +110,6 @@ jobs:
           aws-region: ${{ steps.config.outputs.aws_region }}
 
       - name: Verify AWS identity
-        shell: bash
         run: aws sts get-caller-identity
 
       - name: Setup Terraform
@@ -161,6 +154,7 @@ jobs:
             -out=tfplan \
             -var="aws_region=${{ steps.config.outputs.aws_region }}" \
             -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
+            -var="iam_name_prefix=${{ steps.config.outputs.iam_name_prefix }}" \
             -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/platform.tfvars"
 
       - name: Terraform destroy plan
@@ -174,7 +168,30 @@ jobs:
             -out=tfplan \
             -var="aws_region=${{ steps.config.outputs.aws_region }}" \
             -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
+            -var="iam_name_prefix=${{ steps.config.outputs.iam_name_prefix }}" \
             -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/platform.tfvars"
+
+      - name: Capture custom AMI snapshots before destroy
+        id: ami_cleanup
+        if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
+        working-directory: infra/platform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          AMI_ID="$(terraform output -raw app_ami_id 2>/dev/null || true)"
+
+          if [[ -z "${AMI_ID}" ]]; then
+            echo "snapshot_ids=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SNAPSHOT_IDS="$(aws ec2 describe-images \
+            --image-ids "${AMI_ID}" \
+            --query 'Images[0].BlockDeviceMappings[].Ebs.SnapshotId' \
+            --output text 2>/dev/null || true)"
+
+          echo "snapshot_ids=${SNAPSHOT_IDS}" >> "$GITHUB_OUTPUT"
 
       - name: Terraform apply
         if: ${{ needs.resolve-target.outputs.action == 'apply' }}
@@ -185,6 +202,19 @@ jobs:
         if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
         working-directory: infra/platform
         run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Delete captured AMI snapshots
+        if: ${{ needs.resolve-target.outputs.action == 'destroy' && steps.ami_cleanup.outputs.snapshot_ids != '' }}
+        shell: bash
+        env:
+          SNAPSHOT_IDS: ${{ steps.ami_cleanup.outputs.snapshot_ids }}
+        run: |
+          set -euo pipefail
+
+          for SNAPSHOT_ID in ${SNAPSHOT_IDS}; do
+            echo "Deleting ${SNAPSHOT_ID}"
+            aws ec2 delete-snapshot --snapshot-id "${SNAPSHOT_ID}" || true
+          done
 
       - name: Show platform outputs
         if: ${{ needs.resolve-target.outputs.action == 'apply' }}
