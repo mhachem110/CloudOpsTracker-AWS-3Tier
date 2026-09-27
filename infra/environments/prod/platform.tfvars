@@ -17,9 +17,9 @@ application_repo_url = "https://github.com/mhachem110/CloudOpsTracker-AWS-3Tier.
 application_git_ref  = "main"
 
 # Auto Scaling
-asg_min_size         = 2
+asg_min_size = 2
 asg_desired_capacity = 2
-asg_max_size         = 4
+asg_max_size = 4
 
 # DNS / HTTPS
 root_domain_name        = "cloudopstracker.click"

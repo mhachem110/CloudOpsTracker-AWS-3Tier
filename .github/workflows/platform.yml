@@ -16,18 +16,24 @@ on:
       - "infra/environments/**/platform.tfvars"
       - ".github/workflows/platform.yml"
 
-  # APPLY and DESTROY are explicit manual actions.
+  # APPLY, ROLLBACK and DESTROY are explicit manual operations.
   workflow_dispatch:
     inputs:
       action:
-        description: "Terraform operation for the selected branch/environment"
+        description: "Operation for the selected branch/environment"
         required: true
         default: "plan"
         type: choice
         options:
           - plan
           - apply
+          - rollback
           - destroy
+
+      rollback_ref:
+        description: "For rollback only: prior commit SHA or Git tag from this branch"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -41,6 +47,7 @@ jobs:
     outputs:
       environment: ${{ steps.target.outputs.environment }}
       action: ${{ steps.target.outputs.action }}
+      rollback_ref: ${{ steps.target.outputs.rollback_ref }}
 
     steps:
       - name: Resolve deployment target
@@ -50,6 +57,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           CURRENT_BRANCH: ${{ github.ref_name }}
           REQUESTED_ACTION: ${{ inputs.action }}
+          REQUESTED_ROLLBACK_REF: ${{ inputs.rollback_ref }}
         run: |
           set -euo pipefail
 
@@ -70,12 +78,22 @@ jobs:
             TERRAFORM_ACTION="${REQUESTED_ACTION}"
           fi
 
+          if [[ "${TERRAFORM_ACTION}" == "rollback" && -z "${REQUESTED_ROLLBACK_REF}" ]]; then
+            echo "rollback_ref is required when action=rollback."
+            exit 1
+          fi
+
           echo "environment=${TARGET_ENVIRONMENT}" >> "$GITHUB_OUTPUT"
           echo "action=${TERRAFORM_ACTION}" >> "$GITHUB_OUTPUT"
+          echo "rollback_ref=${REQUESTED_ROLLBACK_REF}" >> "$GITHUB_OUTPUT"
 
           echo "Branch: ${CURRENT_BRANCH}"
           echo "Environment: ${TARGET_ENVIRONMENT}"
-          echo "Terraform action: ${TERRAFORM_ACTION}"
+          echo "Operation: ${TERRAFORM_ACTION}"
+
+          if [[ "${TERRAFORM_ACTION}" == "rollback" ]]; then
+            echo "Rollback ref: ${REQUESTED_ROLLBACK_REF}"
+          fi
 
   terraform:
     name: Platform ${{ needs.resolve-target.outputs.environment }} - ${{ needs.resolve-target.outputs.action }}
@@ -91,6 +109,39 @@ jobs:
     steps:
       - name: Checkout deployment branch
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate rollback ref
+        if: ${{ needs.resolve-target.outputs.action == 'rollback' }}
+        shell: bash
+        env:
+          CURRENT_BRANCH: ${{ github.ref_name }}
+          ROLLBACK_REF: ${{ needs.resolve-target.outputs.rollback_ref }}
+        run: |
+          set -euo pipefail
+
+          git fetch origin "${CURRENT_BRANCH}" --prune
+
+          ROLLBACK_SHA="$(git rev-parse --verify "${ROLLBACK_REF}^{commit}")"
+
+          if ! git merge-base --is-ancestor "${ROLLBACK_SHA}" "origin/${CURRENT_BRANCH}"; then
+            echo "Rollback ref '${ROLLBACK_REF}' is not in the history of '${CURRENT_BRANCH}'."
+            exit 1
+          fi
+
+          echo "Validated rollback commit: ${ROLLBACK_SHA}"
+
+      - name: Checkout rollback version
+        if: ${{ needs.resolve-target.outputs.action == 'rollback' }}
+        shell: bash
+        env:
+          ROLLBACK_REF: ${{ needs.resolve-target.outputs.rollback_ref }}
+        run: |
+          set -euo pipefail
+          git checkout --detach "${ROLLBACK_REF}"
+          echo "Rollback source:"
+          git --no-pager log -1 --oneline
 
       - name: Load project configuration
         id: config
@@ -171,6 +222,18 @@ jobs:
             -var="iam_name_prefix=${{ steps.config.outputs.iam_name_prefix }}" \
             -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/platform.tfvars"
 
+      - name: Show rollback plan summary
+        if: ${{ needs.resolve-target.outputs.action == 'rollback' }}
+        working-directory: infra/platform
+        shell: bash
+        env:
+          ROLLBACK_REF: ${{ needs.resolve-target.outputs.rollback_ref }}
+        run: |
+          set -euo pipefail
+          echo "Rolling back environment '${{ needs.resolve-target.outputs.environment }}'"
+          echo "Rollback source: ${ROLLBACK_REF}"
+          terraform show -no-color tfplan | tail -n 80
+
       - name: Capture custom AMI snapshots before destroy
         id: ami_cleanup
         if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
@@ -198,6 +261,11 @@ jobs:
         working-directory: infra/platform
         run: terraform apply -input=false -auto-approve tfplan
 
+      - name: Terraform rollback
+        if: ${{ needs.resolve-target.outputs.action == 'rollback' }}
+        working-directory: infra/platform
+        run: terraform apply -input=false -auto-approve tfplan
+
       - name: Terraform destroy
         if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
         working-directory: infra/platform
@@ -217,6 +285,6 @@ jobs:
           done
 
       - name: Show platform outputs
-        if: ${{ needs.resolve-target.outputs.action == 'apply' }}
+        if: ${{ needs.resolve-target.outputs.action == 'apply' || needs.resolve-target.outputs.action == 'rollback' }}
         working-directory: infra/platform
         run: terraform output
