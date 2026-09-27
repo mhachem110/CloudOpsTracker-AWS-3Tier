@@ -124,3 +124,16 @@ module "dns" {
   alb_dns_name            = module.alb.dns_name
   alb_zone_id             = module.alb.zone_id
 }
+
+module "monitoring" {
+  source = "../modules/monitoring"
+
+  name_prefix             = var.name_prefix
+  environment             = var.environment
+  aws_region              = var.aws_region
+  alb_arn_suffix          = module.alb.arn_suffix
+  target_group_arn_suffix = module.alb.target_group_arn_suffix
+  autoscaling_group_name  = module.autoscaling.name
+  database_identifier     = module.database.db_instance_identifier
+}
+

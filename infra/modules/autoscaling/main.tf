@@ -38,8 +38,7 @@ resource "aws_autoscaling_group" "this" {
   lifecycle {
     create_before_destroy = true
 
-    # Auto Scaling owns desired capacity after the ASG is created.
-    # Prevent Terraform from fighting the scaling policy.
+    # Auto Scaling owns desired capacity after initial creation.
     ignore_changes = [
       desired_capacity
     ]
