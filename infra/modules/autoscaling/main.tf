@@ -16,10 +16,12 @@ resource "aws_autoscaling_group" "this" {
 
   instance_refresh {
     strategy = "Rolling"
+
     preferences {
       min_healthy_percentage = 50
       instance_warmup        = 120
     }
+
     triggers = ["launch_template"]
   }
 
@@ -49,6 +51,7 @@ resource "aws_autoscaling_policy" "cpu_target" {
     predefined_metric_specification {
       predefined_metric_type = "ASGAverageCPUUtilization"
     }
+
     target_value = 60
   }
 }
