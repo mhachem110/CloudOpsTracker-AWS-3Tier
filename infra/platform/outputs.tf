@@ -40,3 +40,12 @@ output "acm_certificate_arn" {
 output "route53_record_fqdn" {
   value = module.dns.fqdn
 }
+
+output "cloudwatch_dashboard_name" {
+  value = module.monitoring.dashboard_name
+}
+
+output "cloudwatch_alarm_names" {
+  value = module.monitoring.alarm_names
+}
+
