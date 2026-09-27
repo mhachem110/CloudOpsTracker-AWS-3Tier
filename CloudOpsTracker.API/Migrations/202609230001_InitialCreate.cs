@@ -7,6 +7,7 @@ namespace CloudOpsTracker.API.Migrations;
 
 public partial class InitialCreate : Migration
 {
+    public int textvar = 0;
     protected override void Up(MigrationBuilder migrationBuilder)
     {
         migrationBuilder.CreateTable(
