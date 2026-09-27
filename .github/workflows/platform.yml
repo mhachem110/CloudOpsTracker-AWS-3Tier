@@ -1,0 +1,192 @@
+name: platform-deploy
+
+on:
+  # Normal promotion runs PLAN only. No infrastructure is created by a merge.
+  push:
+    branches:
+      - dev
+      - stage
+      - uat
+      - main
+    paths:
+      - "infra/platform/**"
+      - "infra/modules/network/**"
+      - "infra/modules/database/**"
+      - "infra/environments/**/platform.tfvars"
+      - ".github/workflows/platform.yml"
+
+  # APPLY and DESTROY are explicit manual actions.
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform operation for the selected branch/environment"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  resolve-target:
+    name: Resolve branch to AWS environment
+    runs-on: ubuntu-latest
+
+    outputs:
+      environment: ${{ steps.target.outputs.environment }}
+      action: ${{ steps.target.outputs.action }}
+
+    steps:
+      - name: Resolve deployment target
+        id: target
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CURRENT_BRANCH: ${{ github.ref_name }}
+          REQUESTED_ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+
+          case "${CURRENT_BRANCH}" in
+            dev)
+              TARGET_ENVIRONMENT="dev"
+              ;;
+            stage)
+              TARGET_ENVIRONMENT="stage"
+              ;;
+            uat)
+              TARGET_ENVIRONMENT="uat"
+              ;;
+            main)
+              TARGET_ENVIRONMENT="prod"
+              ;;
+            *)
+              echo "Branch '${CURRENT_BRANCH}' is not an approved deployment branch."
+              exit 1
+              ;;
+          esac
+
+          if [[ "${EVENT_NAME}" == "push" ]]; then
+            TERRAFORM_ACTION="plan"
+          else
+            TERRAFORM_ACTION="${REQUESTED_ACTION}"
+          fi
+
+          echo "environment=${TARGET_ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "action=${TERRAFORM_ACTION}" >> "$GITHUB_OUTPUT"
+
+          echo "Branch: ${CURRENT_BRANCH}"
+          echo "Environment: ${TARGET_ENVIRONMENT}"
+          echo "Terraform action: ${TERRAFORM_ACTION}"
+
+  terraform:
+    name: Platform ${{ needs.resolve-target.outputs.environment }} - ${{ needs.resolve-target.outputs.action }}
+    needs: resolve-target
+    runs-on: ubuntu-latest
+
+    environment: ${{ needs.resolve-target.outputs.environment }}
+
+    concurrency:
+      group: cloudopstracker-platform-${{ needs.resolve-target.outputs.environment }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout deployment branch
+        uses: actions/checkout@v7
+
+      - name: Load project configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          source infra/project.env
+
+          echo "aws_region=${AWS_REGION}" >> "$GITHUB_OUTPUT"
+          echo "name_prefix=${NAME_PREFIX}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ steps.config.outputs.aws_region }}
+
+      - name: Verify AWS identity
+        shell: bash
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.4"
+          terraform_wrapper: false
+
+      - name: Resolve Terraform state bucket
+        id: state
+        shell: bash
+        env:
+          NAME_PREFIX: ${{ steps.config.outputs.name_prefix }}
+        run: |
+          set -euo pipefail
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          echo "bucket=${NAME_PREFIX}-tfstate-${ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive infra
+
+      - name: Terraform init
+        working-directory: infra/platform
+        run: |
+          terraform init \
+            -input=false \
+            -backend-config="bucket=${{ steps.state.outputs.bucket }}" \
+            -backend-config="key=${{ needs.resolve-target.outputs.environment }}/platform.tfstate" \
+            -backend-config="region=${{ steps.config.outputs.aws_region }}"
+
+      - name: Terraform validate
+        working-directory: infra/platform
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        if: ${{ needs.resolve-target.outputs.action != 'destroy' }}
+        working-directory: infra/platform
+        run: |
+          terraform plan \
+            -input=false \
+            -no-color \
+            -out=tfplan \
+            -var="aws_region=${{ steps.config.outputs.aws_region }}" \
+            -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
+            -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/platform.tfvars"
+
+      - name: Terraform destroy plan
+        if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
+        working-directory: infra/platform
+        run: |
+          terraform plan \
+            -destroy \
+            -input=false \
+            -no-color \
+            -out=tfplan \
+            -var="aws_region=${{ steps.config.outputs.aws_region }}" \
+            -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
+            -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/platform.tfvars"
+
+      - name: Terraform apply
+        if: ${{ needs.resolve-target.outputs.action == 'apply' }}
+        working-directory: infra/platform
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Terraform destroy
+        if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
+        working-directory: infra/platform
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Show platform outputs
+        if: ${{ needs.resolve-target.outputs.action == 'apply' }}
+        working-directory: infra/platform
+        run: terraform output
