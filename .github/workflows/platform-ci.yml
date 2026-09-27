@@ -8,9 +8,10 @@ on:
       - uat
       - main
     paths:
+      - "CloudOpsTracker.API/**"
+      - "CloudOpsTracker.Web/**"
       - "infra/platform/**"
-      - "infra/modules/network/**"
-      - "infra/modules/database/**"
+      - "infra/modules/**"
       - "infra/environments/**/platform.tfvars"
       - ".github/workflows/platform-ci.yml"
       - ".github/workflows/platform.yml"
@@ -47,3 +48,11 @@ jobs:
       - name: Terraform validate
         working-directory: infra/platform
         run: terraform validate -no-color
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build .NET solution
+        run: dotnet build CloudOpsTracker.sln -c Release
