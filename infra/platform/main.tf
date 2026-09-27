@@ -81,6 +81,13 @@ module "launch_template" {
   database_secret_arn = nonsensitive(module.database.master_user_secret_arn)
 }
 
+module "certificate" {
+  source = "../modules/certificate"
+
+  root_domain_name        = var.root_domain_name
+  application_domain_name = var.application_domain_name
+}
+
 module "alb" {
   source = "../modules/alb"
 
@@ -91,6 +98,7 @@ module "alb" {
   security_group_id = module.network.alb_security_group_id
   target_port       = 80
   health_check_path = "/healthz"
+  certificate_arn   = module.certificate.certificate_arn
 }
 
 module "autoscaling" {
@@ -106,4 +114,13 @@ module "autoscaling" {
   min_size         = var.asg_min_size
   desired_capacity = var.asg_desired_capacity
   max_size         = var.asg_max_size
+}
+
+module "dns" {
+  source = "../modules/dns"
+
+  hosted_zone_id          = module.certificate.hosted_zone_id
+  application_domain_name = var.application_domain_name
+  alb_dns_name            = module.alb.dns_name
+  alb_zone_id             = module.alb.zone_id
 }

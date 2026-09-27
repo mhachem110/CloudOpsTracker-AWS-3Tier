@@ -20,3 +20,8 @@ application_git_ref  = "stage"
 asg_min_size         = 1
 asg_desired_capacity = 2
 asg_max_size         = 3
+
+# DNS / HTTPS
+root_domain_name        = "cloudopstracker.click"
+application_domain_name = "stage.cloudopstracker.click"
+

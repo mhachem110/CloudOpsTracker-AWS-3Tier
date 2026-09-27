@@ -23,3 +23,20 @@ output "launch_template_latest_version" { value = module.launch_template.latest_
 output "alb_dns_name" { value = module.alb.dns_name }
 output "alb_target_group_arn" { value = module.alb.target_group_arn }
 output "autoscaling_group_name" { value = module.autoscaling.name }
+
+
+output "application_domain_name" {
+  value = var.application_domain_name
+}
+
+output "application_url" {
+  value = "https://${var.application_domain_name}"
+}
+
+output "acm_certificate_arn" {
+  value = module.certificate.certificate_arn
+}
+
+output "route53_record_fqdn" {
+  value = module.dns.fqdn
+}
