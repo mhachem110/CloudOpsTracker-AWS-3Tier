@@ -1,7 +1,7 @@
 output "instance_id" {
   description = "Single EC2 application instance ID."
   value       = aws_instance.this.id
-  depends_on  = [aws_ssm_association.readiness]
+  depends_on  = [terraform_data.readiness_verified]
 }
 
 output "private_ip" {

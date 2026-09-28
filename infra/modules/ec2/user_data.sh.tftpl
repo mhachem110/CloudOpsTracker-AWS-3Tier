@@ -4,6 +4,7 @@ set -euo pipefail
 exec > >(tee -a /var/log/cloudopstracker-bootstrap.log) 2>&1
 
 echo "Starting CloudOpsTracker bootstrap..."
+echo "Image readiness requires a successful per-instance SSM execution."
 
 # cloud-init can run user-data without HOME being defined.
 # .NET/NuGet requires HOME or DOTNET_CLI_HOME during restore/publish.
