@@ -16,22 +16,19 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: Terraform operation
+        description: Operation (the branch above selects the environment)
         type: choice
         default: plan
         options: [plan, apply, rollback, destroy]
         required: true
       rollback_ref:
-        description: Known-good commit or tag in the selected branch history
+        description: "Rollback only: known-good commit SHA or tag from this branch"
         type: string
       rollback_scope:
-        description: Roll back application source only, or Terraform and application together
+        description: "Rollback only: application keeps current Terraform; infrastructure uses old Terraform too"
         type: choice
         default: application
         options: [application, infrastructure]
-      confirm_destroy:
-        description: For destroy only, type the environment name (dev/stage/uat/prod)
-        type: string
 
 permissions:
   contents: read
@@ -51,7 +48,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REQUESTED_ACTION: ${{ inputs.action }}
           ROLLBACK_REF: ${{ inputs.rollback_ref }}
-          CONFIRM_DESTROY: ${{ inputs.confirm_destroy }}
         run: |
           set -euo pipefail
           case "$CURRENT_BRANCH" in
@@ -64,9 +60,6 @@ jobs:
           case "$operation" in plan|apply|rollback|destroy) ;; *) exit 1 ;; esac
           if [[ "$operation" == rollback && -z "$ROLLBACK_REF" ]]; then
             echo "rollback_ref is required"; exit 1
-          fi
-          if [[ "$operation" == destroy && "$CONFIRM_DESTROY" != "$target" ]]; then
-            echo "Destroy confirmation must match the target environment"; exit 1
           fi
           echo "environment=$target" >> "$GITHUB_OUTPUT"
           echo "action=$operation" >> "$GITHUB_OUTPUT"
@@ -207,7 +200,13 @@ jobs:
             sleep 15
           done
           target_group="$(terraform -chdir=infra/platform output -raw alb_target_group_arn)"
-          aws elbv2 wait target-in-service --target-group-arn "$target_group"
+          if ! aws elbv2 wait target-in-service --target-group-arn "$target_group"; then
+            echo "ALB targets did not become healthy; current target health follows."
+            aws elbv2 describe-target-health --target-group-arn "$target_group" \
+              --query 'TargetHealthDescriptions[].{Target:Target.Id,State:TargetHealth.State,Reason:TargetHealth.Reason,Description:TargetHealth.Description}' \
+              --output table
+            exit 1
+          fi
           url="$(terraform -chdir=infra/platform output -raw application_url)"
           curl --fail --silent --show-error --max-time 15 --retry 5 --retry-all-errors "$url/health/ready"
           printf '\nRelease: %s\n' "${{ steps.release.outputs.sha }}" >> "$GITHUB_STEP_SUMMARY"

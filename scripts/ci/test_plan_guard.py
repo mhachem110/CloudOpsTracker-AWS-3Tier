@@ -16,6 +16,9 @@ class PlanGuardTests(unittest.TestCase):
     def test_expected_image_source_replacement_is_allowed(self):
         self.assertFalse(guard.check(self.plan("module.ec2.aws_instance.this", ["delete", "create"]), "apply"))
 
+    def test_readiness_gate_replacement_is_allowed(self):
+        self.assertFalse(guard.check(self.plan("module.ec2.terraform_data.readiness_verified", ["delete", "create"]), "apply"))
+
     def test_image_source_removal_without_replacement_is_blocked(self):
         self.assertTrue(guard.check(self.plan("module.ec2.aws_instance.this", ["delete"]), "rollback"))
 

@@ -9,7 +9,8 @@ def check(plan, action):
         return []
     # Expected release lifecycle only. Database/network/roles/ALB remain protected.
     replaceable = {"module.ec2.aws_instance.this", "module.image.aws_ami_from_instance.this",
-                   "module.ec2.aws_ssm_association.readiness"}
+                   "module.ec2.aws_ssm_association.readiness",
+                   "module.ec2.terraform_data.readiness_verified"}
     return [r["address"] for r in changes if "delete" in r["change"]["actions"]
             and not (r["address"] in replaceable and "create" in r["change"]["actions"])]
 

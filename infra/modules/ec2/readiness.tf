@@ -11,7 +11,7 @@ resource "aws_ssm_document" "readiness" {
       action = "aws:runShellScript"
       name   = "VerifyImage"
       inputs = {
-        timeoutSeconds = "900"
+        timeoutSeconds = "1800"
         runCommand = [
           "set -eu",
           "cloud-init status --wait",
@@ -29,7 +29,7 @@ resource "aws_ssm_association" "readiness" {
   name                             = aws_ssm_document.readiness.name
   document_version                 = aws_ssm_document.readiness.latest_version
   association_name                 = "${var.name_prefix}-${var.environment}-image-readiness-${aws_instance.this.id}"
-  wait_for_success_timeout_seconds = 1200
+  wait_for_success_timeout_seconds = 2100
   parameters                       = { Release = var.application_git_ref }
   lifecycle {
     replace_triggered_by = [aws_instance.this]
@@ -37,6 +37,25 @@ resource "aws_ssm_association" "readiness" {
   targets {
     key    = "InstanceIds"
     values = [aws_instance.this.id]
+  }
+}
+
+# Association creation can finish before SSM has executed the command on the
+# newly launched instance. Check the target execution itself before imaging.
+resource "terraform_data" "readiness_verified" {
+  triggers_replace = [
+    aws_instance.this.id,
+    aws_ssm_association.readiness.id,
+    var.application_git_ref
+  ]
+
+  provisioner "local-exec" {
+    command = "bash ${path.module}/wait-readiness.sh"
+    environment = {
+      AWS_REGION         = var.aws_region
+      SOURCE_INSTANCE_ID = aws_instance.this.id
+      ASSOCIATION_ID     = aws_ssm_association.readiness.id
+    }
   }
 }
 
