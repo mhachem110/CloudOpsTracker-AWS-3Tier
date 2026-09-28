@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CloudOpsTracker.Web", "Clou
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CloudOpsTracker.API", "CloudOpsTracker.API\CloudOpsTracker.API.csproj", "{3C4B5404-9890-4D63-8B0F-5E3B6E321C15}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CloudOpsTracker.Tests", "CloudOpsTracker.Tests\CloudOpsTracker.Tests.csproj", "{B9E9ED46-4EA1-4846-93C5-C6F91337504E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -20,5 +22,9 @@ Global
 		{3C4B5404-9890-4D63-8B0F-5E3B6E321C15}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3C4B5404-9890-4D63-8B0F-5E3B6E321C15}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3C4B5404-9890-4D63-8B0F-5E3B6E321C15}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B9E9ED46-4EA1-4846-93C5-C6F91337504E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B9E9ED46-4EA1-4846-93C5-C6F91337504E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B9E9ED46-4EA1-4846-93C5-C6F91337504E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B9E9ED46-4EA1-4846-93C5-C6F91337504E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

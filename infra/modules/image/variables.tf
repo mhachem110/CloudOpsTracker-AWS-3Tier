@@ -12,3 +12,5 @@ variable "source_instance_id" {
   description = "Verified single EC2 instance used to create the golden AMI."
   type        = string
 }
+
+variable "release_sha" { type = string }

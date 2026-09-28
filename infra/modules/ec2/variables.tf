@@ -58,3 +58,8 @@ variable "application_git_ref" {
   description = "Git branch/ref cloned by the training EC2 bootstrap."
   type        = string
 }
+
+variable "enable_application_logs" {
+  type    = bool
+  default = false
+}

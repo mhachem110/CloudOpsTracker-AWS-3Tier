@@ -18,7 +18,7 @@ mkdir -p "$DOTNET_CLI_HOME"
 mkdir -p "$NUGET_PACKAGES"
 
 dnf update -y
-dnf install -y git nginx jq dotnet-sdk-8.0 amazon-cloudwatch-agent
+dnf install -y git nginx jq dotnet-sdk-8.0 amazon-cloudwatch-agent logrotate
 
 systemctl enable --now amazon-ssm-agent
 
@@ -40,24 +40,26 @@ DB_HOST=${database_host}
 DB_PORT=1433
 DB_NAME=CloudOpsTrackerDb
 DB_SECRET_ARN=${database_secret_arn}
+DATA_PROTECTION_PATH=${data_protection_path}
 EOF
 
 chmod 0644 /etc/cloudopstracker/runtime.env
 
-rm -rf /opt/cloudopstracker/src
-git clone --depth 1 --branch ${application_git_ref} \
-  ${application_repo_url} \
-  /opt/cloudopstracker/src
+# Fetch precisely the reviewed commit; branch movement cannot change this build.
+RELEASE_SHA='${application_git_ref}'
+mkdir -p /opt/cloudopstracker/src
+git -C /opt/cloudopstracker/src init
+git -C /opt/cloudopstracker/src remote add origin '${application_repo_url}'
+git -C /opt/cloudopstracker/src fetch --depth 1 origin "$RELEASE_SHA"
+git -C /opt/cloudopstracker/src checkout --detach FETCH_HEAD
+test "$(git -C /opt/cloudopstracker/src rev-parse HEAD)" = "$RELEASE_SHA"
+printf '%s' "$RELEASE_SHA" > /opt/cloudopstracker/release-sha
 
-dotnet publish \
-  /opt/cloudopstracker/src/CloudOpsTracker.API/CloudOpsTracker.API.csproj \
-  -c Release \
-  -o /opt/cloudopstracker/api
-
-dotnet publish \
-  /opt/cloudopstracker/src/CloudOpsTracker.Web/CloudOpsTracker.Web.csproj \
-  -c Release \
-  -o /opt/cloudopstracker/web
+for PROJECT in API Web; do
+  dotnet restore "/opt/cloudopstracker/src/CloudOpsTracker.$PROJECT/CloudOpsTracker.$PROJECT.csproj" --locked-mode
+  dotnet publish "/opt/cloudopstracker/src/CloudOpsTracker.$PROJECT/CloudOpsTracker.$PROJECT.csproj" \
+    --no-restore -c Release -o "/opt/cloudopstracker/$(echo "$PROJECT" | tr '[:upper:]' '[:lower:]')"
+done
 
 chown -R cloudops:cloudops \
   /opt/cloudopstracker/api \
@@ -88,7 +90,7 @@ export UseHttpsRedirection=false
 export ASPNETCORE_ENVIRONMENT=Production
 export ASPNETCORE_URLS=http://127.0.0.1:5001
 
-exec /usr/bin/dotnet /opt/cloudopstracker/api/CloudOpsTracker.API.dll
+exec /usr/bin/dotnet /opt/cloudopstracker/api/CloudOpsTracker.API.dll "$@"
 EOF
 
 chmod 0755 /usr/local/bin/run-cloudopstracker-api
@@ -97,6 +99,9 @@ cat >/usr/local/bin/run-cloudopstracker-web <<'EOF'
 #!/bin/bash
 set -euo pipefail
 
+source /etc/cloudopstracker/runtime.env
+export DataProtection__ParameterPath="$DATA_PROTECTION_PATH"
+export AWS_REGION
 export ApiBaseUrl=http://127.0.0.1:5001
 export UseHttpsRedirection=false
 export ASPNETCORE_ENVIRONMENT=Production
@@ -157,22 +162,56 @@ server {
     add_header X-CloudOps-Instance $hostname always;
 
     location = /healthz {
-        proxy_pass http://127.0.0.1:5001/healthz;
+        proxy_pass http://127.0.0.1:5000/health/ready;
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
     }
 
     location /api/ {
         proxy_pass http://127.0.0.1:5001;
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
     }
 
     location / {
         proxy_pass http://127.0.0.1:5000;
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
     }
+}
+EOF
+
+%{ if application_log_group != "" ~}
+cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {"file_path":"/var/log/cloudopstracker/api.log","log_group_name":"${application_log_group}","log_stream_name":"{instance_id}/api"},
+          {"file_path":"/var/log/cloudopstracker/web.log","log_group_name":"${application_log_group}","log_stream_name":"{instance_id}/web"},
+          {"file_path":"/var/log/cloudopstracker-bootstrap.log","log_group_name":"${application_log_group}","log_stream_name":"{instance_id}/bootstrap"}
+        ]
+      }
+    }
+  }
+}
+EOF
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+systemctl enable amazon-cloudwatch-agent
+%{ endif ~}
+
+# Bound local disk use when centralized collection is disabled or unavailable.
+cat >/etc/logrotate.d/cloudopstracker <<'EOF'
+/var/log/cloudopstracker/*.log {
+    daily
+    rotate 7
+    size 10M
+    missingok
+    notifempty
+    copytruncate
+    compress
 }
 EOF
 
@@ -181,8 +220,16 @@ systemctl enable cloudopstracker-api
 systemctl enable cloudopstracker-web
 systemctl enable nginx
 
+runuser -u cloudops -- /usr/local/bin/run-cloudopstracker-api --migrate-only
+
 systemctl restart cloudopstracker-api
 systemctl restart cloudopstracker-web
 systemctl restart nginx
 
+# Bounded polling of actual health, never a fixed readiness sleep.
+curl --fail --silent --retry 30 --retry-all-errors --retry-delay 2 --max-time 10 \
+  http://127.0.0.1:5001/health/ready >/dev/null
+curl --fail --silent --retry 30 --retry-all-errors --retry-delay 2 --max-time 10 \
+  http://127.0.0.1/health/ready >/dev/null
+touch /opt/cloudopstracker/bootstrap-ready
 echo "CloudOpsTracker bootstrap finished."

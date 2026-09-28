@@ -7,15 +7,14 @@ on:
       - stage
       - uat
       - main
-    paths:
-      - "CloudOpsTracker.API/**"
-      - "CloudOpsTracker.Web/**"
-      - "infra/**"
-      - ".github/workflows/**"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: security-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   checkov:
@@ -24,15 +23,37 @@ jobs:
 
     steps:
       - name: Checkout proposed changes
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Scan Terraform with Checkov
-        uses: bridgecrewio/checkov-action@v12
+        uses: bridgecrewio/checkov-action@5798bad4f6dd9c1fb67ae3ec10d42d8fb67037c4 # v12
         with:
           directory: infra
           framework: terraform
           soft_fail: true
           output_format: cli
+
+      - name: Enforce core IaC controls
+        uses: bridgecrewio/checkov-action@5798bad4f6dd9c1fb67ae3ec10d42d8fb67037c4 # v12
+        with:
+          directory: infra
+          framework: terraform
+          check: CKV_AWS_16,CKV_AWS_17,CKV_AWS_24,CKV_AWS_53,CKV_AWS_54,CKV_AWS_55,CKV_AWS_56,CKV_AWS_79
+          soft_fail: false
+          output_format: cli
+
+  secrets:
+    name: Secrets prevention
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan Git history with pinned Gitleaks
+        run: |
+          bash scripts/ci/install-tool.sh gitleaks
+          "$RUNNER_TEMP/cloudops-tools/gitleaks" git --redact --no-banner .
 
   trivy:
     name: Trivy repository scan
@@ -40,17 +61,19 @@ jobs:
 
     steps:
       - name: Checkout proposed changes
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Scan repository with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.74.0
           scan-type: fs
           scan-ref: .
           format: table
           severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "0"
+          scanners: vuln,secret
+          trivy-config: trivy.yaml
+          exit-code: "1"
 
   sonarcloud:
     name: SonarCloud code analysis
@@ -63,12 +86,12 @@ jobs:
 
     steps:
       - name: Checkout proposed changes
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Setup .NET 8
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: "8.0.x"
 
@@ -77,16 +100,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dotnet tool install --global dotnet-sonarscanner
+          dotnet tool install --global dotnet-sonarscanner --version 11.3.0
           export PATH="$PATH:$HOME/.dotnet/tools"
 
           dotnet sonarscanner begin \
             /k:"${SONAR_PROJECT_KEY}" \
             /o:"${SONAR_ORGANIZATION}" \
+            /d:sonar.qualitygate.wait=true \
             /d:sonar.host.url="https://sonarcloud.io" \
             /d:sonar.token="${SONAR_TOKEN}"
 
-          dotnet build CloudOpsTracker.sln -c Release
+          dotnet restore CloudOpsTracker.sln --locked-mode
+          dotnet build CloudOpsTracker.sln -c Release --no-restore
 
           dotnet sonarscanner end \
             /d:sonar.token="${SONAR_TOKEN}"
@@ -96,3 +121,43 @@ jobs:
         run: |
           echo "SonarCloud scan skipped."
           echo "Add repository secret SONAR_TOKEN and variables SONAR_PROJECT_KEY + SONAR_ORGANIZATION to enable it."
+
+  supply-chain:
+    name: SBOM and source provenance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Generate source dependency SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          scan-type: fs
+          scan-ref: .
+          format: cyclonedx
+          output: sbom.cdx.json
+          trivy-config: trivy.yaml
+      - name: Record evidence scope
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python -c 'import json,os; print(json.dumps({"source_sha":os.environ["SOURCE_SHA"],"run":os.environ["RUN_URL"],"scope":"source dependency inventory; not a deployed AMI attestation"}))' > provenance.json
+      - name: Attest SBOM (optional entitlement)
+        if: ${{ vars.ENABLE_ATTESTATIONS == 'true' && github.event_name == 'workflow_dispatch' }}
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: sbom.cdx.json
+      - name: Upload security evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dependency-evidence-${{ github.sha }}
+          path: |
+            sbom.cdx.json
+            provenance.json
+          retention-days: 14

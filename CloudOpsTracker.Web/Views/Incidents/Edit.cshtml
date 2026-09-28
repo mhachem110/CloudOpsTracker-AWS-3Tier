@@ -6,6 +6,7 @@
 <h1>Edit Incident #@Model.Id</h1>
 
 <form asp-action="Edit" method="post" class="card form-card">
+    <div asp-validation-summary="All" class="validation"></div>
     <input asp-for="Id" type="hidden" />
 
     <label asp-for="Title"></label>

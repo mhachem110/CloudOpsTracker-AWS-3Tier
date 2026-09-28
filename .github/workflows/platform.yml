@@ -1,290 +1,217 @@
 name: platform-deploy
 
 on:
-  # Normal promotion runs PLAN only. No infrastructure is created by a merge.
   push:
-    branches:
-      - dev
-      - stage
-      - uat
-      - main
+    branches: [dev, stage, uat, main]
     paths:
       - "CloudOpsTracker.API/**"
       - "CloudOpsTracker.Web/**"
+      - "Directory.Build.props"
       - "infra/platform/**"
       - "infra/modules/**"
+      - "infra/project.env"
       - "infra/environments/**/platform.tfvars"
+      - "scripts/ci/**"
       - ".github/workflows/platform.yml"
-
-  # APPLY, ROLLBACK and DESTROY are explicit manual operations.
   workflow_dispatch:
     inputs:
       action:
-        description: "Operation for the selected branch/environment"
-        required: true
-        default: "plan"
+        description: Terraform operation
         type: choice
-        options:
-          - plan
-          - apply
-          - rollback
-          - destroy
-
+        default: plan
+        options: [plan, apply, rollback, destroy]
+        required: true
       rollback_ref:
-        description: "For rollback only: prior commit SHA or Git tag from this branch"
-        required: false
+        description: Known-good commit or tag in the selected branch history
+        type: string
+      rollback_scope:
+        description: Roll back application source only, or Terraform and application together
+        type: choice
+        default: application
+        options: [application, infrastructure]
+      confirm_destroy:
+        description: For destroy only, type the environment name (dev/stage/uat/prod)
         type: string
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   resolve-target:
-    name: Resolve branch to AWS environment
+    name: Resolve environment and operation
     runs-on: ubuntu-latest
-
     outputs:
       environment: ${{ steps.target.outputs.environment }}
       action: ${{ steps.target.outputs.action }}
-      rollback_ref: ${{ steps.target.outputs.rollback_ref }}
-
     steps:
-      - name: Resolve deployment target
-        id: target
+      - id: target
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
           CURRENT_BRANCH: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
           REQUESTED_ACTION: ${{ inputs.action }}
-          REQUESTED_ROLLBACK_REF: ${{ inputs.rollback_ref }}
+          ROLLBACK_REF: ${{ inputs.rollback_ref }}
+          CONFIRM_DESTROY: ${{ inputs.confirm_destroy }}
         run: |
           set -euo pipefail
-
-          case "${CURRENT_BRANCH}" in
-            dev)   TARGET_ENVIRONMENT="dev" ;;
-            stage) TARGET_ENVIRONMENT="stage" ;;
-            uat)   TARGET_ENVIRONMENT="uat" ;;
-            main)  TARGET_ENVIRONMENT="prod" ;;
-            *)
-              echo "Branch '${CURRENT_BRANCH}' is not an approved deployment branch."
-              exit 1
-              ;;
+          case "$CURRENT_BRANCH" in
+            dev|stage|uat) target="$CURRENT_BRANCH" ;;
+            main) target=prod ;;
+            *) echo "Unsupported deployment branch"; exit 1 ;;
           esac
-
-          if [[ "${EVENT_NAME}" == "push" ]]; then
-            TERRAFORM_ACTION="plan"
-          else
-            TERRAFORM_ACTION="${REQUESTED_ACTION}"
+          operation=plan
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then operation="$REQUESTED_ACTION"; fi
+          case "$operation" in plan|apply|rollback|destroy) ;; *) exit 1 ;; esac
+          if [[ "$operation" == rollback && -z "$ROLLBACK_REF" ]]; then
+            echo "rollback_ref is required"; exit 1
           fi
-
-          if [[ "${TERRAFORM_ACTION}" == "rollback" && -z "${REQUESTED_ROLLBACK_REF}" ]]; then
-            echo "rollback_ref is required when action=rollback."
-            exit 1
+          if [[ "$operation" == destroy && "$CONFIRM_DESTROY" != "$target" ]]; then
+            echo "Destroy confirmation must match the target environment"; exit 1
           fi
-
-          echo "environment=${TARGET_ENVIRONMENT}" >> "$GITHUB_OUTPUT"
-          echo "action=${TERRAFORM_ACTION}" >> "$GITHUB_OUTPUT"
-          echo "rollback_ref=${REQUESTED_ROLLBACK_REF}" >> "$GITHUB_OUTPUT"
-
-          echo "Branch: ${CURRENT_BRANCH}"
-          echo "Environment: ${TARGET_ENVIRONMENT}"
-          echo "Operation: ${TERRAFORM_ACTION}"
-
-          if [[ "${TERRAFORM_ACTION}" == "rollback" ]]; then
-            echo "Rollback ref: ${REQUESTED_ROLLBACK_REF}"
-          fi
+          echo "environment=$target" >> "$GITHUB_OUTPUT"
+          echo "action=$operation" >> "$GITHUB_OUTPUT"
 
   terraform:
     name: Platform ${{ needs.resolve-target.outputs.environment }} - ${{ needs.resolve-target.outputs.action }}
     needs: resolve-target
     runs-on: ubuntu-latest
-
+    timeout-minutes: 90
     environment: ${{ needs.resolve-target.outputs.environment }}
-
+    permissions:
+      contents: read
+      id-token: write
     concurrency:
       group: cloudopstracker-platform-${{ needs.resolve-target.outputs.environment }}
       cancel-in-progress: false
-
+    env:
+      OPERATION: ${{ needs.resolve-target.outputs.action }}
+      TARGET_ENVIRONMENT: ${{ needs.resolve-target.outputs.environment }}
+      TF_IN_AUTOMATION: "true"
     steps:
       - name: Checkout deployment branch
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-
-      - name: Validate rollback ref
-        if: ${{ needs.resolve-target.outputs.action == 'rollback' }}
+          persist-credentials: false
+      - name: Resolve immutable release
+        id: release
         shell: bash
         env:
-          CURRENT_BRANCH: ${{ github.ref_name }}
-          ROLLBACK_REF: ${{ needs.resolve-target.outputs.rollback_ref }}
+          ROLLBACK_REF: ${{ inputs.rollback_ref }}
+          ROLLBACK_SCOPE: ${{ inputs.rollback_scope }}
         run: |
           set -euo pipefail
-
-          git fetch origin "${CURRENT_BRANCH}" --prune
-
-          ROLLBACK_SHA="$(git rev-parse --verify "${ROLLBACK_REF}^{commit}")"
-
-          if ! git merge-base --is-ancestor "${ROLLBACK_SHA}" "origin/${CURRENT_BRANCH}"; then
-            echo "Rollback ref '${ROLLBACK_REF}' is not in the history of '${CURRENT_BRANCH}'."
-            exit 1
+          cp scripts/ci/guard-plan.py "$RUNNER_TEMP/guard-plan.py"
+          release_sha="$(git rev-parse HEAD)"
+          if [[ "$OPERATION" == rollback ]]; then
+            release_sha="$(git rev-parse --verify --end-of-options "$ROLLBACK_REF^{commit}")"
+            git merge-base --is-ancestor "$release_sha" HEAD
+            if [[ "$ROLLBACK_SCOPE" == infrastructure ]]; then
+              git checkout --detach "$release_sha"
+            fi
           fi
-
-          echo "Validated rollback commit: ${ROLLBACK_SHA}"
-
-      - name: Checkout rollback version
-        if: ${{ needs.resolve-target.outputs.action == 'rollback' }}
-        shell: bash
-        env:
-          ROLLBACK_REF: ${{ needs.resolve-target.outputs.rollback_ref }}
-        run: |
-          set -euo pipefail
-          git checkout --detach "${ROLLBACK_REF}"
-          echo "Rollback source:"
-          git --no-pager log -1 --oneline
-
+          if [[ "$OPERATION" != destroy ]]; then
+            git cat-file -e "$release_sha:CloudOpsTracker.API/packages.lock.json"
+            git show "$release_sha:CloudOpsTracker.API/Program.cs" | grep -q -- '--migrate-only'
+          fi
+          echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "TF_VAR_application_git_ref=$release_sha" >> "$GITHUB_ENV"
+          echo "### Deployment source" >> "$GITHUB_STEP_SUMMARY"
+          echo "Environment: $TARGET_ENVIRONMENT; operation: $OPERATION; release: $release_sha; infrastructure: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
       - name: Load project configuration
-        id: config
         shell: bash
         run: |
           set -euo pipefail
           source infra/project.env
-
-          echo "aws_region=${AWS_REGION}" >> "$GITHUB_OUTPUT"
-          echo "name_prefix=${NAME_PREFIX}" >> "$GITHUB_OUTPUT"
-          echo "iam_name_prefix=${IAM_NAME_PREFIX}" >> "$GITHUB_OUTPUT"
-
-      - name: Configure AWS credentials with GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v6.3.0
+          echo "AWS_REGION=$AWS_REGION" >> "$GITHUB_ENV"
+          echo "TF_VAR_aws_region=$AWS_REGION" >> "$GITHUB_ENV"
+          echo "TF_VAR_name_prefix=$NAME_PREFIX" >> "$GITHUB_ENV"
+          echo "TF_VAR_iam_name_prefix=$IAM_NAME_PREFIX" >> "$GITHUB_ENV"
+          echo "STATE_BUCKET_PREFIX=$NAME_PREFIX" >> "$GITHUB_ENV"
+      - name: Configure AWS through environment OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ steps.config.outputs.aws_region }}
-
-      - name: Verify AWS identity
-        run: aws sts get-caller-identity
-
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: platform-${{ github.run_id }}
+          mask-aws-account-id: true
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
         with:
           terraform_version: "1.16.4"
           terraform_wrapper: false
-
-      - name: Resolve Terraform state bucket
-        id: state
+      - name: Initialize and validate
         shell: bash
-        env:
-          NAME_PREFIX: ${{ steps.config.outputs.name_prefix }}
         run: |
           set -euo pipefail
-          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-          echo "bucket=${NAME_PREFIX}-tfstate-${ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
-
-      - name: Terraform format check
-        run: terraform fmt -check -recursive infra
-
-      - name: Terraform init
-        working-directory: infra/platform
-        run: |
-          terraform init \
-            -input=false \
-            -backend-config="bucket=${{ steps.state.outputs.bucket }}" \
-            -backend-config="key=${{ needs.resolve-target.outputs.environment }}/platform.tfstate" \
-            -backend-config="region=${{ steps.config.outputs.aws_region }}"
-
-      - name: Terraform validate
-        working-directory: infra/platform
-        run: terraform validate -no-color
-
-      - name: Terraform plan
-        if: ${{ needs.resolve-target.outputs.action != 'destroy' }}
-        working-directory: infra/platform
-        run: |
-          terraform plan \
-            -input=false \
-            -no-color \
-            -out=tfplan \
-            -var="aws_region=${{ steps.config.outputs.aws_region }}" \
-            -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
-            -var="iam_name_prefix=${{ steps.config.outputs.iam_name_prefix }}" \
-            -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/platform.tfvars"
-
-      - name: Terraform destroy plan
-        if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
-        working-directory: infra/platform
-        run: |
-          terraform plan \
-            -destroy \
-            -input=false \
-            -no-color \
-            -out=tfplan \
-            -var="aws_region=${{ steps.config.outputs.aws_region }}" \
-            -var="name_prefix=${{ steps.config.outputs.name_prefix }}" \
-            -var="iam_name_prefix=${{ steps.config.outputs.iam_name_prefix }}" \
-            -var-file="../environments/${{ needs.resolve-target.outputs.environment }}/platform.tfvars"
-
-      - name: Show rollback plan summary
-        if: ${{ needs.resolve-target.outputs.action == 'rollback' }}
-        working-directory: infra/platform
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          terraform fmt -check -recursive infra
+          terraform -chdir=infra/platform init -input=false -lockfile=readonly \
+            -backend-config="bucket=$STATE_BUCKET_PREFIX-tfstate-$account_id" \
+            -backend-config="key=$TARGET_ENVIRONMENT/platform.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          terraform -chdir=infra/platform validate -no-color
+      - name: Create and inspect saved plan
         shell: bash
-        env:
-          ROLLBACK_REF: ${{ needs.resolve-target.outputs.rollback_ref }}
         run: |
           set -euo pipefail
-          echo "Rolling back environment '${{ needs.resolve-target.outputs.environment }}'"
-          echo "Rollback source: ${ROLLBACK_REF}"
-          terraform show -no-color tfplan | tail -n 80
-
-      - name: Capture custom AMI snapshots before destroy
+          destroy_args=()
+          if [[ "$OPERATION" == destroy ]]; then destroy_args=(-destroy); fi
+          terraform -chdir=infra/platform plan -input=false -no-color -lock-timeout=5m \
+            "${destroy_args[@]}" -out=tfplan \
+            -var-file="../environments/$TARGET_ENVIRONMENT/platform.tfvars"
+          terraform -chdir=infra/platform show -json tfplan > "$RUNNER_TEMP/plan.json"
+          python "$RUNNER_TEMP/guard-plan.py" "$RUNNER_TEMP/plan.json" "$OPERATION"
+      - name: Capture this environment's AMI snapshots before destroy
         id: ami_cleanup
         if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
-        working-directory: infra/platform
         shell: bash
         run: |
           set -euo pipefail
-
-          AMI_ID="$(terraform output -raw app_ami_id 2>/dev/null || true)"
-
-          if [[ -z "${AMI_ID}" ]]; then
-            echo "snapshot_ids=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          SNAPSHOT_IDS="$(aws ec2 describe-images \
-            --image-ids "${AMI_ID}" \
-            --query 'Images[0].BlockDeviceMappings[].Ebs.SnapshotId' \
-            --output text 2>/dev/null || true)"
-
-          echo "snapshot_ids=${SNAPSHOT_IDS}" >> "$GITHUB_OUTPUT"
-
-      - name: Terraform apply
-        if: ${{ needs.resolve-target.outputs.action == 'apply' }}
-        working-directory: infra/platform
-        run: terraform apply -input=false -auto-approve tfplan
-
-      - name: Terraform rollback
-        if: ${{ needs.resolve-target.outputs.action == 'rollback' }}
-        working-directory: infra/platform
-        run: terraform apply -input=false -auto-approve tfplan
-
-      - name: Terraform destroy
-        if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
-        working-directory: infra/platform
-        run: terraform apply -input=false -auto-approve tfplan
-
-      - name: Delete captured AMI snapshots
+          ami_id="$(terraform -chdir=infra/platform output -json | python -c 'import json,sys; print(json.load(sys.stdin).get("app_ami_id", {}).get("value", ""))')"
+          if [[ -z "$ami_id" ]]; then exit 0; fi
+          [[ "$ami_id" =~ ^ami-[0-9a-f]+$ ]]
+          snapshot_ids="$(aws ec2 describe-images --owners self --image-ids "$ami_id" \
+            --query 'Images[].BlockDeviceMappings[].Ebs.SnapshotId' --output text)"
+          for snapshot_id in $snapshot_ids; do
+            [[ "$snapshot_id" =~ ^snap-[0-9a-f]+$ ]]
+          done
+          echo "snapshot_ids=$snapshot_ids" >> "$GITHUB_OUTPUT"
+      - name: Apply explicit manual operation
+        if: ${{ github.event_name == 'workflow_dispatch' && needs.resolve-target.outputs.action != 'plan' }}
+        run: terraform -chdir=infra/platform apply -input=false -auto-approve -lock-timeout=5m tfplan
+      - name: Delete captured snapshots after successful destroy
         if: ${{ needs.resolve-target.outputs.action == 'destroy' && steps.ami_cleanup.outputs.snapshot_ids != '' }}
         shell: bash
         env:
           SNAPSHOT_IDS: ${{ steps.ami_cleanup.outputs.snapshot_ids }}
         run: |
           set -euo pipefail
-
-          for SNAPSHOT_ID in ${SNAPSHOT_IDS}; do
-            echo "Deleting ${SNAPSHOT_ID}"
-            aws ec2 delete-snapshot --snapshot-id "${SNAPSHOT_ID}" || true
+          for snapshot_id in $SNAPSHOT_IDS; do
+            aws ec2 delete-snapshot --snapshot-id "$snapshot_id"
           done
-
-      - name: Show platform outputs
+      - name: Verify application rollout
         if: ${{ needs.resolve-target.outputs.action == 'apply' || needs.resolve-target.outputs.action == 'rollback' }}
-        working-directory: infra/platform
-        run: terraform output
+        shell: bash
+        run: |
+          set -euo pipefail
+          group="$(terraform -chdir=infra/platform output -raw autoscaling_group_name)"
+          deadline=$((SECONDS + 1800))
+          while true; do
+            refresh="$(aws autoscaling describe-instance-refreshes --auto-scaling-group-name "$group" --max-records 1 --query 'InstanceRefreshes[0].Status' --output text)"
+            case "$refresh" in
+              None|Successful) break ;;
+              Failed|Cancelled|RollbackFailed|RollbackSuccessful) echo "Rollout did not complete: $refresh"; exit 1 ;;
+            esac
+            if (( SECONDS >= deadline )); then echo "Rollout timeout"; exit 1; fi
+            sleep 15
+          done
+          target_group="$(terraform -chdir=infra/platform output -raw alb_target_group_arn)"
+          aws elbv2 wait target-in-service --target-group-arn "$target_group"
+          url="$(terraform -chdir=infra/platform output -raw application_url)"
+          curl --fail --silent --show-error --max-time 15 --retry 5 --retry-all-errors "$url/health/ready"
+          printf '\nRelease: %s\n' "${{ steps.release.outputs.sha }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary plan material
+        if: always()
+        shell: bash
+        run: rm -f infra/platform/tfplan "$RUNNER_TEMP/plan.json"

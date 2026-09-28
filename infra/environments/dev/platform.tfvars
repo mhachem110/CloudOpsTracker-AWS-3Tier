@@ -14,7 +14,6 @@ database_skip_final_snapshot = true
 ec2_instance_type = "t3.small"
 
 application_repo_url = "https://github.com/mhachem110/CloudOpsTracker-AWS-3Tier.git"
-application_git_ref  = "dev"
 
 # Auto Scaling
 asg_min_size         = 1

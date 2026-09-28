@@ -66,11 +66,13 @@ resource "aws_instance" "this" {
   iam_instance_profile        = aws_iam_instance_profile.this.name
 
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    aws_region           = var.aws_region
-    database_host        = var.database_host
-    database_secret_arn  = var.database_secret_arn
-    application_repo_url = var.application_repo_url
-    application_git_ref  = var.application_git_ref
+    aws_region            = var.aws_region
+    database_host         = var.database_host
+    database_secret_arn   = var.database_secret_arn
+    application_repo_url  = var.application_repo_url
+    application_git_ref   = var.application_git_ref
+    application_log_group = try(aws_cloudwatch_log_group.application[0].name, "")
+    data_protection_path  = "/${var.name_prefix}/${var.environment}/data-protection"
   })
 
   user_data_replace_on_change = true
@@ -88,14 +90,16 @@ resource "aws_instance" "this" {
   }
 
   tags = {
-    Name = "${var.name_prefix}-${var.environment}-app-single"
-    Tier = "application"
-    Mode = "single-instance"
+    Name    = "${var.name_prefix}-${var.environment}-app-single"
+    Tier    = "application"
+    Mode    = "image-source"
+    Release = var.application_git_ref
   }
 
   depends_on = [
     aws_iam_role_policy_attachment.ssm,
     aws_iam_role_policy_attachment.cloudwatch_agent,
-    aws_iam_role_policy.database_secret
+    aws_iam_role_policy.database_secret,
+    aws_iam_role_policy.data_protection
   ]
 }

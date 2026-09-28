@@ -11,6 +11,7 @@ DB_HOST=${database_host}
 DB_PORT=1433
 DB_NAME=CloudOpsTrackerDb
 DB_SECRET_ARN=${database_secret_arn}
+DATA_PROTECTION_PATH=${data_protection_path}
 EOF
 
 chmod 0644 /etc/cloudopstracker/runtime.env
@@ -21,3 +22,8 @@ systemctl restart cloudopstracker-web
 systemctl restart nginx
 
 echo "CloudOpsTracker launch-template runtime bootstrap finished."
+
+if [[ -f /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json ]]; then
+  /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+    -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+fi

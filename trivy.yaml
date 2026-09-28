@@ -1,0 +1,9 @@
+scan:
+  skip-dirs:
+    - .git
+    - .vs
+    - artifacts
+    - "**/.terraform"
+    - "**/bin"
+    - "**/obj"
+    - "**/TestResults"

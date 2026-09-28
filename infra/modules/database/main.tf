@@ -31,10 +31,18 @@ resource "aws_db_instance" "this" {
   auto_minor_version_upgrade = true
   copy_tags_to_snapshot      = true
 
-  deletion_protection = var.deletion_protection
-  skip_final_snapshot = var.skip_final_snapshot
+  deletion_protection       = var.deletion_protection
+  skip_final_snapshot       = var.skip_final_snapshot
+  final_snapshot_identifier = var.final_snapshot_identifier
 
   delete_automated_backups = true
+
+  lifecycle {
+    precondition {
+      condition     = var.skip_final_snapshot || try(length(var.final_snapshot_identifier) > 0, false)
+      error_message = "Set a unique final_snapshot_identifier when final snapshots are enabled."
+    }
+  }
 
   tags = {
     Name = "${var.name_prefix}-${var.environment}-sql"

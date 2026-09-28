@@ -7,14 +7,6 @@ on:
       - stage
       - uat
       - main
-    paths:
-      - "CloudOpsTracker.API/**"
-      - "CloudOpsTracker.Web/**"
-      - "infra/platform/**"
-      - "infra/modules/**"
-      - "infra/environments/**/platform.tfvars"
-      - ".github/workflows/platform-ci.yml"
-      - ".github/workflows/platform.yml"
 
 permissions:
   contents: read
@@ -30,10 +22,10 @@ jobs:
 
     steps:
       - name: Checkout proposed changes
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
         with:
           terraform_version: "1.16.4"
           terraform_wrapper: false
@@ -42,17 +34,30 @@ jobs:
         run: terraform fmt -check -recursive infra
 
       - name: Terraform init without remote backend
-        working-directory: infra/platform
-        run: terraform init -backend=false -input=false
+        run: |
+          for root in bootstrap platform network; do
+            terraform -chdir="infra/$root" init -backend=false -input=false -lockfile=readonly
+          done
 
       - name: Terraform validate
-        working-directory: infra/platform
-        run: terraform validate -no-color
+        run: |
+          for root in bootstrap platform network; do
+            terraform -chdir="infra/$root" validate -no-color
+          done
 
       - name: Setup .NET 8
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: "8.0.x"
 
       - name: Build .NET solution
-        run: dotnet build CloudOpsTracker.sln -c Release
+        run: |
+          dotnet restore CloudOpsTracker.sln --locked-mode
+          dotnet build CloudOpsTracker.sln -c Release --no-restore
+          dotnet test CloudOpsTracker.sln -c Release --no-build
+
+      - name: Validate workflow syntax and saved-plan guard
+        run: |
+          bash scripts/ci/install-tool.sh actionlint
+          "$RUNNER_TEMP/cloudops-tools/actionlint" -shellcheck=""
+          python -B -m unittest discover -s scripts/ci -p 'test_*.py'
