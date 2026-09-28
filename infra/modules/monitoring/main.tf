@@ -22,7 +22,8 @@ resource "aws_cloudwatch_dashboard" "operations" {
 
           metrics = [
             ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", var.alb_arn_suffix, { stat = "Sum" }],
-            [".", "HTTPCode_ELB_5XX_Count", ".", ".", { stat = "Sum" }]
+            [".", "HTTPCode_ELB_5XX_Count", ".", ".", { stat = "Sum" }],
+            [".", "HTTPCode_Target_5XX_Count", ".", ".", { stat = "Sum" }]
           ]
         }
       },
@@ -87,6 +88,8 @@ resource "aws_cloudwatch_dashboard" "operations" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_targets" {
+  alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  ok_actions          = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
   alarm_name          = "${var.name_prefix}-${var.environment}-alb-unhealthy-targets"
   alarm_description   = "CloudOpsTracker has one or more unhealthy ALB targets."
   comparison_operator = "GreaterThanOrEqualToThreshold"
@@ -106,6 +109,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_targets" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
+  alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  ok_actions          = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
   alarm_name          = "${var.name_prefix}-${var.environment}-alb-5xx"
   alarm_description   = "CloudOpsTracker ALB is returning elevated 5XX responses."
   comparison_operator = "GreaterThanOrEqualToThreshold"
@@ -123,6 +128,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "asg_cpu_high" {
+  alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  ok_actions          = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
   alarm_name          = "${var.name_prefix}-${var.environment}-asg-cpu-high"
   alarm_description   = "CloudOpsTracker ASG average CPU is high."
   comparison_operator = "GreaterThanOrEqualToThreshold"
@@ -141,6 +148,8 @@ resource "aws_cloudwatch_metric_alarm" "asg_cpu_high" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
+  alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  ok_actions          = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
   alarm_name          = "${var.name_prefix}-${var.environment}-rds-cpu-high"
   alarm_description   = "CloudOpsTracker RDS CPU is high."
   comparison_operator = "GreaterThanOrEqualToThreshold"
@@ -159,6 +168,8 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_free_storage_low" {
+  alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  ok_actions          = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
   alarm_name          = "${var.name_prefix}-${var.environment}-rds-free-storage-low"
   alarm_description   = "CloudOpsTracker RDS has less than 2 GiB free storage."
   comparison_operator = "LessThanOrEqualToThreshold"
@@ -174,4 +185,20 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage_low" {
   dimensions = {
     DBInstanceIdentifier = var.database_identifier
   }
+}
+
+resource "aws_cloudwatch_metric_alarm" "target_5xx" {
+  alarm_name          = "${var.name_prefix}-${var.environment}-target-5xx"
+  alarm_description   = "Application targets returned at least five 5XX responses in five minutes."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  threshold           = 5
+  metric_name         = "HTTPCode_Target_5XX_Count"
+  namespace           = "AWS/ApplicationELB"
+  period              = 300
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  ok_actions          = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  dimensions          = { LoadBalancer = var.alb_arn_suffix }
 }

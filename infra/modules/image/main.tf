@@ -6,8 +6,13 @@ resource "aws_ami_from_instance" "this" {
   # snapshot is application-consistent for this training milestone.
   snapshot_without_reboot = false
 
+  lifecycle {
+    create_before_destroy = true
+  }
+
   tags = {
-    Name = "${var.name_prefix}-${var.environment}-app-ami"
-    Tier = "application"
+    Name    = "${var.name_prefix}-${var.environment}-app-ami"
+    Tier    = "application"
+    Release = var.release_sha
   }
 }

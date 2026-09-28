@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
+BOOTSTRAP_ACTION="${BOOTSTRAP_ACTION:-plan}"
 REGION="${AWS_REGION:?AWS_REGION must be set}"
 NAME_PREFIX="${NAME_PREFIX:?NAME_PREFIX must be set}"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 BUCKET="${NAME_PREFIX}-tfstate-${ACCOUNT_ID}"
 exec 3>&1 1>&2
+# A plan may inspect an existing bucket, but must never create or reconfigure it.
+if [[ "$BOOTSTRAP_ACTION" != apply ]]; then
+  aws s3api head-bucket --bucket "$BUCKET" >/dev/null
+  echo "$BUCKET" >&3
+  exit 0
+fi
 if aws s3api head-bucket --bucket "${BUCKET}" >/dev/null 2>&1; then
   echo "State bucket ${BUCKET} already exists."
 else

@@ -37,10 +37,12 @@ module "database" {
   backup_retention_period    = var.database_backup_retention_period
   deletion_protection        = var.database_deletion_protection
   skip_final_snapshot        = var.database_skip_final_snapshot
+  final_snapshot_identifier  = var.database_final_snapshot_identifier
 }
 
 module "ec2" {
-  source = "../modules/ec2"
+  depends_on = [module.network]
+  source     = "../modules/ec2"
 
   name_prefix       = var.name_prefix
   iam_name_prefix   = var.iam_name_prefix
@@ -54,8 +56,9 @@ module "ec2" {
   database_host       = module.database.db_address
   database_secret_arn = nonsensitive(module.database.master_user_secret_arn)
 
-  application_repo_url = var.application_repo_url
-  application_git_ref  = var.application_git_ref
+  application_repo_url    = var.application_repo_url
+  application_git_ref     = var.application_git_ref
+  enable_application_logs = var.enable_application_logs
 }
 
 module "image" {
@@ -64,6 +67,7 @@ module "image" {
   name_prefix        = var.name_prefix
   environment        = var.environment
   source_instance_id = module.ec2.instance_id
+  release_sha        = var.application_git_ref
 }
 
 module "launch_template" {
@@ -135,5 +139,6 @@ module "monitoring" {
   target_group_arn_suffix = module.alb.target_group_arn_suffix
   autoscaling_group_name  = module.autoscaling.name
   database_identifier     = module.database.db_instance_identifier
+  alarm_topic_arn         = var.alarm_topic_arn
 }
 

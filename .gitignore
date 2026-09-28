@@ -9,6 +9,9 @@
 *.tfstate
 *.tfstate.*
 *.tfplan
+tfplan
+artifacts/
+TestResults/
 crash.log
 crash.*.log
 *.tfvars

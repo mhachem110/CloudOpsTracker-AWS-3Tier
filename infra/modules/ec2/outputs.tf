@@ -1,6 +1,7 @@
 output "instance_id" {
   description = "Single EC2 application instance ID."
   value       = aws_instance.this.id
+  depends_on  = [aws_ssm_association.readiness]
 }
 
 output "private_ip" {

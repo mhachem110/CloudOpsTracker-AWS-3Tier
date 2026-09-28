@@ -51,27 +51,42 @@ resource "aws_iam_role" "deploy" {
 }
 
 data "aws_iam_policy_document" "deploy_core" {
+  for_each = local.environments
   statement {
-    sid = "TerraformStateBucket"
-
-    actions = [
-      "s3:GetBucketLocation",
-      "s3:ListBucket"
-    ]
-
+    sid       = "TerraformStateBucketLocation"
+    actions   = ["s3:GetBucketLocation"]
     resources = [local.tfstate_arn]
+  }
+  statement {
+    sid       = "EnvironmentStateListing"
+    actions   = ["s3:ListBucket"]
+    resources = [local.tfstate_arn]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["${each.key}/*", "env:/"]
+    }
+  }
+  statement {
+    sid       = "EnvironmentStateLockDeletion"
+    actions   = ["s3:DeleteObject"]
+    resources = ["${local.tfstate_arn}/${each.key}/*.tflock"]
   }
 
   statement {
     sid = "TerraformStateObjects"
 
     actions = [
-      "s3:DeleteObject",
       "s3:GetObject",
       "s3:PutObject"
     ]
 
-    resources = ["${local.tfstate_arn}/*"]
+    resources = [
+      "${local.tfstate_arn}/${each.key}/platform.tfstate",
+      "${local.tfstate_arn}/${each.key}/platform.tfstate.tflock",
+      "${local.tfstate_arn}/${each.key}/network.tfstate",
+      "${local.tfstate_arn}/${each.key}/network.tfstate.tflock"
+    ]
   }
 
   statement {
@@ -140,26 +155,60 @@ data "aws_iam_policy_document" "deploy_core" {
     ]
 
     resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
   }
 
   statement {
-    sid       = "LoadBalancer"
-    actions   = ["elasticloadbalancing:*"]
+    sid       = "LoadBalancerRead"
+    actions   = ["elasticloadbalancing:Describe*"]
     resources = ["*"]
   }
+  statement {
+    sid     = "EnvironmentLoadBalancers"
+    actions = ["elasticloadbalancing:*"]
+    resources = [
+      "arn:${local.partition}:elasticloadbalancing:${var.aws_region}:${local.account_id}:loadbalancer/app/${var.name_prefix}-${each.key}-*/*",
+      "arn:${local.partition}:elasticloadbalancing:${var.aws_region}:${local.account_id}:targetgroup/${var.name_prefix}-${each.key}-*/*",
+      "arn:${local.partition}:elasticloadbalancing:${var.aws_region}:${local.account_id}:listener/app/${var.name_prefix}-${each.key}-*/*/*",
+      "arn:${local.partition}:elasticloadbalancing:${var.aws_region}:${local.account_id}:listener-rule/app/${var.name_prefix}-${each.key}-*/*/*/*"
+    ]
+  }
 
   statement {
-    sid       = "AutoScaling"
+    sid       = "AutoScalingRead"
+    actions   = ["autoscaling:Describe*"]
+    resources = ["*"]
+  }
+  statement {
+    sid       = "EnvironmentAutoScaling"
     actions   = ["autoscaling:*"]
-    resources = ["*"]
+    resources = ["arn:${local.partition}:autoscaling:${var.aws_region}:${local.account_id}:autoScalingGroup:*:autoScalingGroupName/${var.name_prefix}-${each.key}-*"]
   }
 }
 
 data "aws_iam_policy_document" "deploy_services" {
+  for_each = local.environments
   statement {
-    sid       = "RDS"
-    actions   = ["rds:*"]
+    sid       = "RDSRead"
+    actions   = ["rds:Describe*", "rds:ListTagsForResource"]
     resources = ["*"]
+  }
+  statement {
+    sid = "EnvironmentRDS"
+    actions = [
+      "rds:CreateDBInstance", "rds:ModifyDBInstance", "rds:DeleteDBInstance",
+      "rds:CreateDBSubnetGroup", "rds:ModifyDBSubnetGroup", "rds:DeleteDBSubnetGroup",
+      "rds:AddTagsToResource", "rds:RemoveTagsFromResource"
+    ]
+    resources = [
+      "arn:${local.partition}:rds:${var.aws_region}:${local.account_id}:db:${var.name_prefix}-${each.key}-*",
+      "arn:${local.partition}:rds:${var.aws_region}:${local.account_id}:subgrp:${var.name_prefix}-${each.key}-*",
+      "arn:${local.partition}:rds:${var.aws_region}:${local.account_id}:snapshot:${var.name_prefix}-${each.key}-*"
+    ]
   }
 
   statement {
@@ -190,41 +239,47 @@ data "aws_iam_policy_document" "deploy_services" {
   }
 
   statement {
-    sid = "CloudWatch"
-
-    actions = [
-      "cloudwatch:*",
-      "logs:*"
-    ]
-
+    sid       = "MonitoringRead"
+    actions   = ["cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource", "logs:DescribeLogGroups"]
     resources = ["*"]
+  }
+  statement {
+    sid     = "EnvironmentMonitoring"
+    actions = ["cloudwatch:PutDashboard", "cloudwatch:GetDashboard", "cloudwatch:DeleteDashboards", "cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:TagResource", "cloudwatch:UntagResource", "logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:PutRetentionPolicy", "logs:DeleteRetentionPolicy", "logs:ListTagsForResource", "logs:TagResource", "logs:UntagResource"]
+    resources = [
+      "arn:${local.partition}:cloudwatch::${local.account_id}:dashboard/${var.name_prefix}-${each.key}-*",
+      "arn:${local.partition}:cloudwatch:${var.aws_region}:${local.account_id}:alarm:${var.name_prefix}-${each.key}-*",
+      "arn:${local.partition}:logs:${var.aws_region}:${local.account_id}:log-group:/${var.name_prefix}/${each.key}/*"
+    ]
   }
 
   statement {
-    sid       = "SystemsManager"
-    actions   = ["ssm:*"]
+    sid       = "PublicBaseImageParameter"
+    actions   = ["ssm:GetParameter", "ssm:GetParameters"]
+    resources = ["arn:${local.partition}:ssm:${var.aws_region}::parameter/aws/service/ami-amazon-linux-latest/*"]
+  }
+  statement {
+    sid       = "EnvironmentReadinessDocument"
+    actions   = ["ssm:CreateDocument", "ssm:UpdateDocument", "ssm:UpdateDocumentDefaultVersion", "ssm:DeleteDocument", "ssm:DescribeDocument", "ssm:GetDocument", "ssm:AddTagsToResource", "ssm:RemoveTagsFromResource", "ssm:ListTagsForResource"]
+    resources = ["arn:${local.partition}:ssm:${var.aws_region}:${local.account_id}:document/${var.name_prefix}-${each.key}-*"]
+  }
+  # Association IDs are service generated; instance/document checks need live validation.
+  statement {
+    sid       = "ReadinessAssociations"
+    actions   = ["ssm:CreateAssociation", "ssm:UpdateAssociation", "ssm:DeleteAssociation", "ssm:DescribeAssociation", "ssm:ListAssociations", "ssm:DescribeAssociationExecutions", "ssm:DescribeAssociationExecutionTargets"]
     resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
   }
 
+  # RDS creates service-named secrets. Deployment reads metadata, never credentials.
   statement {
-    sid = "SecretsManager"
-
-    actions = [
-      "secretsmanager:CreateSecret",
-      "secretsmanager:DeleteSecret",
-      "secretsmanager:DescribeSecret",
-      "secretsmanager:GetResourcePolicy",
-      "secretsmanager:GetSecretValue",
-      "secretsmanager:ListSecretVersionIds",
-      "secretsmanager:PutResourcePolicy",
-      "secretsmanager:PutSecretValue",
-      "secretsmanager:RestoreSecret",
-      "secretsmanager:TagResource",
-      "secretsmanager:UntagResource",
-      "secretsmanager:UpdateSecret"
-    ]
-
-    resources = ["*"]
+    sid       = "RDSSecretMetadata"
+    actions   = ["secretsmanager:CreateSecret", "secretsmanager:DescribeSecret", "secretsmanager:TagResource", "secretsmanager:ListSecretVersionIds", "secretsmanager:GetResourcePolicy"]
+    resources = ["arn:${local.partition}:secretsmanager:${var.aws_region}:${local.account_id}:secret:rds!*"]
   }
 
   statement {
@@ -261,12 +316,12 @@ data "aws_iam_policy_document" "deploy_services" {
 }
 
 data "aws_iam_policy_document" "deploy_iam" {
+  for_each = local.environments
   statement {
     sid = "ProjectRoles"
 
     actions = [
       "iam:AddRoleToInstanceProfile",
-      "iam:AttachRolePolicy",
       "iam:CreateInstanceProfile",
       "iam:CreateRole",
       "iam:DeleteInstanceProfile",
@@ -280,7 +335,6 @@ data "aws_iam_policy_document" "deploy_iam" {
       "iam:ListInstanceProfilesForRole",
       "iam:ListInstanceProfileTags",
       "iam:ListRolePolicies",
-      "iam:PassRole",
       "iam:PutRolePolicy",
       "iam:RemoveRoleFromInstanceProfile",
       "iam:TagInstanceProfile",
@@ -292,9 +346,30 @@ data "aws_iam_policy_document" "deploy_iam" {
     ]
 
     resources = [
-      "arn:${local.partition}:iam::${local.account_id}:role/${var.iam_name_prefix}-*",
-      "arn:${local.partition}:iam::${local.account_id}:instance-profile/${var.iam_name_prefix}-*"
+      "arn:${local.partition}:iam::${local.account_id}:role/${var.iam_name_prefix}-app-${each.key}",
+      "arn:${local.partition}:iam::${local.account_id}:instance-profile/${var.iam_name_prefix}-app-${each.key}"
     ]
+  }
+
+  statement {
+    sid       = "AttachOnlyRuntimeManagedPolicies"
+    actions   = ["iam:AttachRolePolicy"]
+    resources = ["arn:${local.partition}:iam::${local.account_id}:role/${var.iam_name_prefix}-app-${each.key}"]
+    condition {
+      test     = "ArnEquals"
+      variable = "iam:PolicyARN"
+      values   = ["arn:${local.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore", "arn:${local.partition}:iam::aws:policy/CloudWatchAgentServerPolicy"]
+    }
+  }
+  statement {
+    sid       = "PassOnlyEnvironmentApplicationRole"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:${local.partition}:iam::${local.account_id}:role/${var.iam_name_prefix}-app-${each.key}"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ec2.amazonaws.com"]
+    }
   }
 
   statement {
@@ -332,7 +407,7 @@ resource "aws_iam_policy" "deploy_core" {
 
   name        = "${var.iam_name_prefix}-deploy-${each.key}-core"
   description = "CloudOpsTracker ${each.key}: Terraform state, VPC/EC2, ALB and Auto Scaling."
-  policy      = data.aws_iam_policy_document.deploy_core.json
+  policy      = data.aws_iam_policy_document.deploy_core[each.key].json
 }
 
 resource "aws_iam_policy" "deploy_services" {
@@ -340,7 +415,7 @@ resource "aws_iam_policy" "deploy_services" {
 
   name        = "${var.iam_name_prefix}-deploy-${each.key}-services"
   description = "CloudOpsTracker ${each.key}: RDS, KMS, monitoring, SSM, secrets and HTTPS/DNS."
-  policy      = data.aws_iam_policy_document.deploy_services.json
+  policy      = data.aws_iam_policy_document.deploy_services[each.key].json
 }
 
 resource "aws_iam_policy" "deploy_iam" {
@@ -348,7 +423,7 @@ resource "aws_iam_policy" "deploy_iam" {
 
   name        = "${var.iam_name_prefix}-deploy-${each.key}-iam"
   description = "CloudOpsTracker ${each.key}: project IAM roles, instance profiles and service-linked roles."
-  policy      = data.aws_iam_policy_document.deploy_iam.json
+  policy      = data.aws_iam_policy_document.deploy_iam[each.key].json
 }
 
 resource "aws_iam_role_policy_attachment" "deploy_core" {

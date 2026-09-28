@@ -49,3 +49,5 @@ output "cloudwatch_alarm_names" {
   value = module.monitoring.alarm_names
 }
 
+
+output "application_release_sha" { value = var.application_git_ref }

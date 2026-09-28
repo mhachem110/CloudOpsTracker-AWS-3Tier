@@ -24,9 +24,10 @@ resource "aws_launch_template" "this" {
   # Runtime user-data only refreshes environment-specific DB values and
   # restarts the services when future ASG instances are launched.
   user_data = base64encode(templatefile("${path.module}/runtime_user_data.sh.tftpl", {
-    aws_region          = var.aws_region
-    database_host       = var.database_host
-    database_secret_arn = var.database_secret_arn
+    aws_region           = var.aws_region
+    database_host        = var.database_host
+    database_secret_arn  = var.database_secret_arn
+    data_protection_path = "/${var.name_prefix}/${var.environment}/data-protection"
   }))
 
   block_device_mappings {

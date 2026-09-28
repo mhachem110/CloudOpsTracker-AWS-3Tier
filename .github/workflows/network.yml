@@ -1,20 +1,7 @@
-name: network-deploy
+name: legacy-network-maintenance
 
 on:
-  # A merge into an environment branch automatically runs PLAN only.
-  # No resources are created from a normal code promotion.
-  push:
-    branches:
-      - dev
-      - stage
-      - uat
-      - main
-    paths:
-      - "infra/network/**"
-      - "infra/modules/network/**"
-      - "infra/environments/**"
-      - ".github/workflows/network.yml"
-
+  # Retained for legacy state owners; excluded from normal promotions.
   # Apply and destroy are intentional manual operations.
   workflow_dispatch:
     inputs:
@@ -100,7 +87,7 @@ jobs:
 
     steps:
       - name: Checkout deployment branch
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Load project configuration
         id: config
@@ -113,7 +100,7 @@ jobs:
           echo "name_prefix=${NAME_PREFIX}" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials with GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v6.3.0
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ steps.config.outputs.aws_region }}
@@ -123,7 +110,7 @@ jobs:
         run: aws sts get-caller-identity
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
         with:
           terraform_version: "1.16.4"
           terraform_wrapper: false

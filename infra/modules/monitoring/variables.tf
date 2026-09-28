@@ -27,3 +27,8 @@ variable "autoscaling_group_name" {
 variable "database_identifier" {
   type = string
 }
+
+variable "alarm_topic_arn" {
+  type    = string
+  default = null
+}

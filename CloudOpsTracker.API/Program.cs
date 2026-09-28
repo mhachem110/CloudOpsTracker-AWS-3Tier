@@ -2,7 +2,16 @@ using CloudOpsTracker.API.Data;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
-var builder = WebApplication.CreateBuilder(args);
+var migrateOnly = args.Contains("--migrate-only");
+var builder = WebApplication.CreateBuilder(args.Where(a => a != "--migrate-only").ToArray());
+
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole(options => options.UseUtcTimestamp = true);
+builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
+    options.KnownProxies.Add(System.Net.IPAddress.Loopback);
+});
 
 builder.Services.AddControllers();
 
@@ -42,6 +51,7 @@ builder.Services.AddDbContext<CloudOpsDbContext>(options =>
     options.UseSqlServer(connectionString));
 
 var app = builder.Build();
+app.UseForwardedHeaders();
 
 if (builder.Configuration.GetValue("UseHttpsRedirection", true))
 {
@@ -50,13 +60,15 @@ if (builder.Configuration.GetValue("UseHttpsRedirection", true))
 
 app.MapControllers();
 
-// Training-project convenience: apply the existing EF Core migration when the
-// API starts. In a larger production system this would normally be a separate
-// controlled migration job.
-using (var scope = app.Services.CreateScope())
+// Run once on the image source, before the readiness gate and ASG rollout.
+if (migrateOnly)
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<CloudOpsDbContext>();
     await db.Database.MigrateAsync();
+    return;
 }
 
 app.Run();
+
+public partial class Program { }

@@ -76,8 +76,12 @@ variable "application_repo_url" {
 }
 
 variable "application_git_ref" {
-  description = "Git branch/ref used by the EC2 bootstrap."
+  description = "Immutable 40-character commit SHA supplied by the deployment workflow."
   type        = string
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.application_git_ref))
+    error_message = "application_git_ref must be a full lowercase Git commit SHA."
+  }
 }
 
 
@@ -106,4 +110,21 @@ variable "root_domain_name" {
 
 variable "application_domain_name" {
   type = string
+}
+
+variable "database_final_snapshot_identifier" {
+  description = "Explicit unique snapshot name when final snapshots are enabled."
+  type        = string
+  default     = null
+}
+
+variable "enable_application_logs" {
+  description = "Opt in to CloudWatch log ingestion/storage charges."
+  type        = bool
+  default     = false
+}
+variable "alarm_topic_arn" {
+  description = "Optional existing SNS topic for alarms; subscriptions managed externally."
+  type        = string
+  default     = null
 }
