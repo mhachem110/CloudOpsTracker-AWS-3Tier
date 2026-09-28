@@ -155,34 +155,9 @@ jobs:
             -var-file="../environments/$TARGET_ENVIRONMENT/platform.tfvars"
           terraform -chdir=infra/platform show -json tfplan > "$RUNNER_TEMP/plan.json"
           python "$RUNNER_TEMP/guard-plan.py" "$RUNNER_TEMP/plan.json" "$OPERATION"
-      - name: Capture this environment's AMI snapshots before destroy
-        id: ami_cleanup
-        if: ${{ needs.resolve-target.outputs.action == 'destroy' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          ami_id="$(terraform -chdir=infra/platform output -json | python -c 'import json,sys; print(json.load(sys.stdin).get("app_ami_id", {}).get("value", ""))')"
-          if [[ -z "$ami_id" ]]; then exit 0; fi
-          [[ "$ami_id" =~ ^ami-[0-9a-f]+$ ]]
-          snapshot_ids="$(aws ec2 describe-images --owners self --image-ids "$ami_id" \
-            --query 'Images[].BlockDeviceMappings[].Ebs.SnapshotId' --output text)"
-          for snapshot_id in $snapshot_ids; do
-            [[ "$snapshot_id" =~ ^snap-[0-9a-f]+$ ]]
-          done
-          echo "snapshot_ids=$snapshot_ids" >> "$GITHUB_OUTPUT"
       - name: Apply explicit manual operation
         if: ${{ github.event_name == 'workflow_dispatch' && needs.resolve-target.outputs.action != 'plan' }}
         run: terraform -chdir=infra/platform apply -input=false -auto-approve -lock-timeout=5m tfplan
-      - name: Delete captured snapshots after successful destroy
-        if: ${{ needs.resolve-target.outputs.action == 'destroy' && steps.ami_cleanup.outputs.snapshot_ids != '' }}
-        shell: bash
-        env:
-          SNAPSHOT_IDS: ${{ steps.ami_cleanup.outputs.snapshot_ids }}
-        run: |
-          set -euo pipefail
-          for snapshot_id in $SNAPSHOT_IDS; do
-            aws ec2 delete-snapshot --snapshot-id "$snapshot_id"
-          done
       - name: Verify application rollout
         if: ${{ needs.resolve-target.outputs.action == 'apply' || needs.resolve-target.outputs.action == 'rollback' }}
         shell: bash
